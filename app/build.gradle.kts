@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Compatibility shim for older Android Studio/Kotlin import flows that still
+// request this task on the app module during Gradle sync.
+tasks.register("prepareKotlinBuildScriptModel")
+
 android {
     namespace = "com.unum.regula"
     compileSdk = 34
