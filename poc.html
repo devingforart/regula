@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Propuesta Técnica Rust/MySQL - 2026</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+/* 1. PALETA DE COLORES RUST INDUSTRIAL */
+:root {
+  --rust-orange: #ce412b;      
+  --rust-dark: #0a0a0a;        
+  --rust-surface: #161616;     
+  --rust-sand: #fdf6e3;        
+  --rust-white: #ffffff;       
+  --rust-slate: #94a3b8;
+  --rust-border: #2a2a2a;      
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background-color: #000;
+  display: grid;
+  gap: 30px;
+  grid-template-columns: 1fr;
+  margin: 0;
+  min-height: 100vh;
+  padding: 40px 0;
+  place-items: center;
+}
+
+.slide-container {
+  align-items: flex-start;
+  background-color: var(--rust-dark);
+  color: var(--rust-sand);
+  display: flex;
+  flex-direction: column;
+  font-family: 'Urbanist', sans-serif;
+  height: 720px;
+  justify-content: flex-start;
+  overflow: hidden;
+  padding: 60px;
+  position: relative;
+  width: 1280px;
+  border: 1px solid var(--rust-border);
+}
+
+/* DECORACIÓN */
+.slide-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 90% 10%, rgba(206, 65, 43, 0.08) 0%, transparent 50%);
+  z-index: 0;
+}
+
+.slide-container::after {
+  content: '';
+  position: absolute;
+  bottom: 40px;
+  left: 60px;
+  right: 60px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--rust-orange), transparent);
+  z-index: 0;
+}
+
+.slide-container > * { position: relative; z-index: 1; }
+
+/* TIPOGRAFÍA */
+h1, h2, h3 { font-family: 'Urbanist', sans-serif; color: var(--rust-white); margin: 0; }
+h1 span, h2 span { color: var(--rust-orange); }
+
+h1 { font-size: 72px; font-weight: 700; line-height: 1.1; }
+.slide-title { font-size: 48px; font-weight: 700; margin-bottom: 35px; border-left: 6px solid var(--rust-orange); padding-left: 20px; width: 100%; }
+h3 { font-size: 28px; font-weight: 600; margin-bottom: 12px; color: var(--rust-orange); }
+
+p, li { font-size: 21px; line-height: 1.4; color: var(--rust-sand); margin: 0; }
+
+/* LAYOUTS */
+.content-area { flex-grow: 1; width: 100%; display: flex; flex-direction: column; justify-content: center; }
+
+.two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; width: 100%; align-items: center; }
+
+/* ILUSTRACIONES CSS NATIVAS (REEMPLAZO DE IMÁGENES ROTAS) */
+.image-wrapper { 
+  background: #000; 
+  border: 1px solid var(--rust-border); 
+  border-radius: 16px; 
+  height: 420px; 
+  overflow: hidden; 
+  width: 100%; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.css-illustration {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, #1a1a1a 0%, #050505 100%);
+  color: var(--rust-orange);
+  text-align: center;
+}
+
+.css-illustration i {
+  font-size: 140px;
+  margin-bottom: 25px;
+  filter: drop-shadow(0 0 25px rgba(206, 65, 43, 0.3));
+}
+
+.css-illustration span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px;
+  color: var(--rust-slate);
+  letter-spacing: 1px;
+}
+
+/* TILES & LISTS */
+.tiled-content { display: flex; gap: 25px; width: 100%; align-items: stretch; }
+.tile {
+  background-color: var(--rust-surface);
+  border: 1px solid var(--rust-border);
+  padding: 30px;
+  border-radius: 20px;
+  flex: 1;
+}
+.tile .icon { font-size: 38px; color: var(--rust-orange); margin-bottom: 15px; }
+
+.bullet-list { list-style: none; padding: 0; }
+.bullet-list li { margin-bottom: 18px; padding-left: 45px; position: relative; }
+.bullet-list i { color: var(--rust-orange); left: 0; position: absolute; top: 6px; font-size: 24px; }
+
+/* TABLES */
+.table-wrapper { width: 100%; border-radius: 12px; overflow: hidden; border: 1px solid var(--rust-border); background: var(--rust-surface); }
+table { width: 100%; border-collapse: collapse; }
+th { background-color: var(--rust-orange); color: var(--rust-white); padding: 22px; text-align: left; font-size: 24px; text-transform: uppercase; }
+td { padding: 20px; border-bottom: 1px solid var(--rust-border); color: var(--rust-sand); font-size: 22px; }
+tr:last-child td { border-bottom: none; }
+.total-row { background: rgba(206, 65, 43, 0.15); }
+.total-row td { color: var(--rust-orange); font-weight: 700; font-size: 26px; }
+
+/* CHARTS */
+.chart-container { width: 100%; display: flex; flex-direction: column; gap: 25px; }
+.bar-row { display: flex; align-items: center; gap: 20px; }
+.bar-label { flex: 0 0 300px; color: var(--rust-sand); font-weight: 600; font-size: 22px; text-align: right; }
+.bar-track { flex-grow: 1; height: 40px; background: #1a1a1a; border-radius: 20px; overflow: hidden; }
+.bar-fill { 
+  height: 100%; 
+  background: linear-gradient(90deg, #b7410e, var(--rust-orange)); 
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 20px;
+}
+.bar-value { color: var(--rust-white); font-weight: 700; font-size: 18px; }
+
+    </style>
+</head>
+<body>
+
+<div class="slide-container" id="slide1">
+    <div class="content-area" style="text-align: center;">
+        <h2 style="letter-spacing: 7px; color: var(--rust-orange); font-size: 22px; margin-bottom: 25px;">INGENIERÍA DE SOFTWARE 2026</h2>
+        <h1>Sistema de <span>Retención</span><br>y Student Success</h1>
+        <p style="margin-top: 35px; font-size: 26px; opacity: 0.9;">
+            Infraestructura propia de alta performance: <strong>Rust & MySQL</strong><br>
+            Acompañamiento automatizado vía WhatsApp & Meta API
+        </p>
+    </div>
+</div>
+
+<div class="slide-container" id="slide2">
+    <h2 class="slide-title">Backend en <span>Rust</span></h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <p>Construimos un motor a medida para garantizar eficiencia industrial:</p>
+                <ul class="bullet-list" style="margin-top: 30px;">
+                    <li><i class="fa-solid fa-bolt"></i> <strong>Velocidad Real:</strong> Procesamiento de reglas en milisegundos.</li>
+                    <li><i class="fa-solid fa-shield-halved"></i> <strong>Estabilidad 24/7:</strong> Seguridad de memoria que elimina caídas críticas.</li>
+                    <li><i class="fa-solid fa-server"></i> <strong>Eficiencia:</strong> Mínimo consumo de recursos en servidores Linux.</li>
+                </ul>
+            </div>
+            <div class="image-wrapper">
+                <div class="css-illustration">
+                    <i class="fa-solid fa-microchip"></i>
+                    <span>fn process_rules() -> Result<(), Error></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide3">
+    <h2 class="slide-title">Infraestructura <span>MySQL</span></h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="image-wrapper">
+                <div class="css-illustration">
+                    <i class="fa-solid fa-database"></i>
+                    <span>SELECT * FROM states WHERE status = 'active';</span>
+                </div>
+            </div>
+            <div>
+                <h3>Control de Información</h3>
+                <p>Repositorio central de estados en tiempo real sin dependencias externas:</p>
+                <ul class="bullet-list" style="margin-top: 25px;">
+                    <li><i class="fa-solid fa-lock"></i> <strong>Soberanía:</strong> Ustedes son los únicos dueños de los datos.</li>
+                    <li><i class="fa-solid fa-clock-rotate-left"></i> <strong>Historial:</strong> Trazabilidad completa de cada acción y alerta.</li>
+                    <li><i class="fa-solid fa-chart-line"></i> <strong>Escalabilidad:</strong> Preparado para miles de alumnos simultáneos.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide4">
+    <h2 class="slide-title">Conexión <span>Meta API</span></h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <h3>Integración Oficial</h3>
+                <p>Uso de herramientas certificadas para comunicación institucional:</p>
+                <ul class="bullet-list" style="margin-top: 25px;">
+                    <li><i class="fa-brands fa-whatsapp"></i> <strong>WhatsApp API:</strong> Mensajes directos con alta tasa de lectura.</li>
+                    <li><i class="fa-solid fa-envelope"></i> <strong>Mailing:</strong> Salida SMTP integrada para refuerzo de avisos.</li>
+                    <li><i class="fa-solid fa-check-double"></i> <strong>Métricas:</strong> Confirmación de entrega y lectura en tiempo real.</li>
+                </ul>
+            </div>
+            <div class="image-wrapper">
+                <div class="css-illustration">
+                    <i class="fa-brands fa-whatsapp"></i>
+                    <span>POST /v20.0/messages HTTP/1.1</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide5">
+    <h2 class="slide-title">Etapas de <span>Acompañamiento</span></h2>
+    <div class="content-area">
+        <div class="tiled-content">
+            <div class="tile">
+                <div class="icon"><i class="fa-solid fa-door-open"></i></div>
+                <h3>Fase 1: Onboarding</h3>
+                <p>Elimina la fricción inicial. El sistema envía automáticamente los accesos por WhatsApp para asegurar el primer ingreso del alumno.</p>
+            </div>
+            <div class="tile">
+                <div class="icon"><i class="fa-solid fa-heart-pulse"></i></div>
+                <h3>Fase 2: Compromiso</h3>
+                <p>El motor detecta 72 horas de inactividad y dispara mensajes motivacionales para reinsertar al alumno al estudio.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide6">
+    <h2 class="slide-title">Fase 3: <span>Punto de Control</span></h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="image-wrapper">
+                <div class="css-illustration">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>[ Dashboard Analítico en Vivo ]</span>
+                </div>
+            </div>
+            <div>
+                <h3>Rescate de Alumnos</h3>
+                <p>Evaluación de progreso al medio término para identificar riesgos:</p>
+                <ul class="bullet-list" style="margin-top: 25px;">
+                    <li><i class="fa-solid fa-magnifying-glass"></i> Detección de falta de exámenes o tareas.</li>
+                    <li><i class="fa-solid fa-comment-dots"></i> Encuestas de satisfacción automáticas vía chat.</li>
+                    <li><i class="fa-solid fa-user-shield"></i> Alerta a tutores en casos de riesgo de abandono.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide7">
+    <h2 class="slide-title">Cierre y <span>Monetización</span></h2>
+    <div class="content-area">
+        <div class="tiled-content">
+            <div class="tile">
+                <div class="icon"><i class="fa-solid fa-graduation-cap"></i></div>
+                <h3>Fase 4: Soporte Final</h3>
+                <p>Acompañamiento intensivo en el tramo final para garantizar la entrega del proyecto y la certificación.</p>
+            </div>
+            <div class="tile" style="border-color: var(--rust-orange);">
+                <div class="icon"><i class="fa-solid fa-hand-holding-dollar"></i></div>
+                <h3>Fase 5: Graduación</h3>
+                <p>Festejo de logros y oferta automática del siguiente nivel educativo para extender el valor del cliente.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide8">
+    <h2 class="slide-title">Inversión: <span>Desarrollo</span></h2>
+    <div class="content-area">
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Concepto de Software</th>
+                        <th>Arquitectura / Alcance</th>
+                        <th>Inversión (USD)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Infraestructura Core</td>
+                        <td>Backend en Rust + MySQL Server</td>
+                        <td>$800</td>
+                    </tr>
+                    <tr>
+                        <td>Sistema de Lógica</td>
+                        <td>Desarrollo de las 5 fases de automatización</td>
+                        <td>$1,500</td>
+                    </tr>
+                    <tr>
+                        <td>Integración Meta</td>
+                        <td>App Facebook + WhatsApp API + Mailing</td>
+                        <td>$700</td>
+                    </tr>
+                    <tr class="total-row">
+                        <td>TOTAL PROYECTO</td>
+                        <td>Código funcional llave en mano</td>
+                        <td>$3,000</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide9">
+    <h2 class="slide-title">Soporte y <span>Mantenimiento</span></h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <p>Aseguramos la estabilidad operativa 24/7 de su infraestructura propia:</p>
+                <div class="tile" style="margin-top: 30px; border-left: 10px solid var(--rust-orange);">
+                    <h3 style="color: var(--rust-white); margin-bottom: 5px;">$270 USD / mes</h3>
+                    <p style="font-size: 19px; color: var(--rust-orange);">Servidores, Monitoreo y Soporte.</p>
+                </div>
+            </div>
+            <ul class="bullet-list">
+                <li><i class="fa-solid fa-server"></i> Gestión de servidores Linux de alto rendimiento.</li>
+                <li><i class="fa-solid fa-shield-virus"></i> Backups diarios y resguardos de seguridad MySQL.</li>
+                <li><i class="fa-solid fa-rotate"></i> Actualizaciones por cambios en API de Meta.</li>
+                <li><i class="fa-solid fa-bug-slash"></i> Resolución de incidencias técnicas prioritarias.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide10">
+    <h2 class="slide-title">Visión <span>Estratégica</span></h2>
+    <div class="content-area">
+        <div class="tiled-content" style="flex-direction: column;">
+            <div class="tile" style="margin-bottom: 20px;">
+                <div class="icon"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+                <h3>Transparencia de Costos</h3>
+                <p>Los consumos de WhatsApp son facturados directamente por Meta a su cuenta corporativa (aprox. <strong>$0.04 USD</strong> c/u). Sin intermediarios ni comisiones.</p>
+            </div>
+            <div class="tile" style="border-color: var(--rust-orange);">
+                <div class="icon"><i class="fa-solid fa-layer-group"></i></div>
+                <h3>Futuros Proyectos</h3>
+                <p>Al ser dueños de la <strong>infraestructura core</strong>, el desarrollo de flujos adicionales en el futuro tendrá un costo de implementación significativamente menor.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="slide-container" id="slide11">
+    <h2 class="slide-title">Resultados <span>Proyectados</span></h2>
+    <div class="content-area">
+        <div class="chart-container">
+            <div class="bar-row">
+                <div class="bar-label">Retención de Alumnos</div>
+                <div class="bar-track"><div class="bar-fill" style="width: 85%;"><span class="bar-value">+35%</span></div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Ahorro en Soporte</div>
+                <div class="bar-track"><div class="bar-fill" style="width: 70%;"><span class="bar-value">-50%</span></div></div>
+            </div>
+            <div class="bar-row">
+                <div class="bar-label">Crecimiento de LTV</div>
+                <div class="bar-track"><div class="bar-fill" style="width: 60%;"><span class="bar-value">+20%</span></div></div>
+            </div>
+        </div>
+        <p style="margin-top: 50px; text-align: center; font-style: italic; opacity: 0.6; font-size: 19px;">
+            *Estimaciones basadas en benchmarks de industria educativa 2026.
+        </p>
+    </div>
+</div>
+
+<div class="slide-container" id="slide12">
+    <div class="content-area" style="text-align: center;">
+        <div class="css-illustration" style="width: 250px; height: 250px; border-radius: 50%; margin: 0 auto 30px; border: 4px solid var(--rust-orange); background: var(--rust-surface);">
+            <i class="fa-solid fa-handshake" style="font-size: 100px; margin: 0;"></i>
+        </div>
+        <h1>¿Damos el <span>salto</span>?</h1>
+        <p style="margin-top: 20px; font-size: 26px;">Estamos listos para automatizar el éxito de sus alumnos.</p>
+        <p style="margin-top: 45px; color: var(--rust-slate); font-size: 18px; letter-spacing: 2px;">
+            ARGENTINA, MAYO 2026 | VÁLIDO POR 15 DÍAS.
+        </p>
+    </div>
+</div>
+
+</body>
+</html>

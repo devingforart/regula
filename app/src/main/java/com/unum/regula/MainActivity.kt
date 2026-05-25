@@ -247,7 +247,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderStatus(message: String) {
-        binding.statusText.text = message
-        Toast.makeText(this, message.lineSequence().firstOrNull().orEmpty(), Toast.LENGTH_SHORT).show()
+        runOnUiThread {
+            binding.statusText.text = message
+            Toast.makeText(this, message.lineSequence().firstOrNull().orEmpty(), Toast.LENGTH_SHORT).show()
+        }
     }
 }
