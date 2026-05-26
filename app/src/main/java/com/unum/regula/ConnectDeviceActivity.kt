@@ -9,14 +9,11 @@ import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
-import android.content.ComponentName
 import android.content.Intent
-import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.widget.ArrayAdapter
 import android.widget.Toast
@@ -25,8 +22,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.regula.common.ble.BLEWrapper
-import com.regula.common.ble.BleWrapperCallback
-import com.regula.common.ble.RegulaBleService
 import com.regula.common.ble.callback.BleManagerCallback
 import com.regula.documentreader.api.DocumentReader
 import com.regula.documentreader.api.completions.IDocumentReaderInitCompletion
@@ -39,10 +34,10 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private lateinit var binding: ActivityConnectDeviceBinding
     private lateinit var configStore: ConfigStore
     private var bleManager: BLEWrapper? = null
-    private var isBleServiceConnected = false
     private var loadingDialog: AlertDialog? = null
     private var bleScanner: BluetoothLeScanner? = null
     private var isScanning = false
+    private var selectedDevice: BluetoothDevice? = null
     private val discoveredDevices = linkedMapOf<String, BluetoothDevice>()
     private lateinit var devicesAdapter: ArrayAdapter<String>
 
@@ -50,30 +45,29 @@ class ConnectDeviceActivity : AppCompatActivity() {
         (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter
     }
 
-    private val timeoutHandler = Handler(Looper.getMainLooper())
-    private val timeoutRunnable = Runnable {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val connectTimeout = Runnable {
         dismissDialog()
-        stopBleService()
-        showStatus("No se pudo conectar al Regula 7310. Verifica que esté encendido y con Bluetooth activo.")
+        bleManager?.disconnect()
+        showStatus("No se pudo conectar al Regula 7310. Selecciona otro dispositivo o verifica que el equipo esté activo.")
     }
 
-    private val stopScanRunnable = Runnable {
+    private val scanTimeout = Runnable {
         stopBleScan()
         if (discoveredDevices.isEmpty()) {
-            showStatus("No se detectaron dispositivos BLE. Enciende el 7310 e inténtalo otra vez.")
+            showStatus("No se detectaron dispositivos BLE. Asegúrate de que la workstation esté activa.")
         } else {
-            showStatus("Selecciona el dispositivo correcto de la lista y luego toca conectar.")
+            showStatus("Selecciona un dispositivo de la lista y luego toca conectar.")
         }
     }
 
     private val permissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        if (allGranted) {
-            ensureBluetoothAndConnect()
+        if (permissions.values.all { it }) {
+            ensureBluetoothAndScan()
         } else {
-            showStatus("Se necesitan permisos Bluetooth/ubicación para emparejar el Regula 7310.")
+            showStatus("Se necesitan permisos Bluetooth para detectar el Regula 7310.")
         }
     }
 
@@ -81,9 +75,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (bluetoothAdapter?.isEnabled == true) {
-            startBluetoothService()
+            startBleScan()
         } else {
-            showStatus("Activa Bluetooth para conectar el Regula 7310.")
+            showStatus("Activa Bluetooth para detectar el Regula 7310.")
         }
     }
 
@@ -95,15 +89,18 @@ class ConnectDeviceActivity : AppCompatActivity() {
         configStore = ConfigStore(this)
         val config = configStore.load()
         binding.deviceNameInput.setText(config.deviceName)
+
         devicesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
         binding.devicesList.adapter = devicesAdapter
         binding.devicesList.setOnItemClickListener { _, _, position, _ ->
             val selected = devicesAdapter.getItem(position).orEmpty()
-            val name = selected.substringBefore(" | ").trim()
+            val address = selected.substringAfterLast(" | ").trim()
+            val device = discoveredDevices.values.firstOrNull { it.address == address } ?: return@setOnItemClickListener
+            selectedDevice = device
+            val name = device.name?.trim().orEmpty().ifBlank { address }
             binding.deviceNameInput.setText(name)
-            val updated = configStore.load().copy(deviceName = name)
-            configStore.save(updated)
-            showStatus("Dispositivo seleccionado: $name")
+            configStore.save(configStore.load().copy(deviceName = name))
+            showStatus("Seleccionado: $name (${device.address})")
         }
 
         if (DocumentReader.Instance().isReady) {
@@ -111,14 +108,16 @@ class ConnectDeviceActivity : AppCompatActivity() {
             return
         }
 
-        binding.connectButton.setOnClickListener {
-            val updated = configStore.load().copy(deviceName = binding.deviceNameInput.text?.toString().orEmpty().trim().ifBlank { "Regula 7310" })
-            configStore.save(updated)
-            requestPermissionsAndConnect()
-        }
-
         binding.scanButton.setOnClickListener {
             requestPermissionsAndScan()
+        }
+
+        binding.connectButton.setOnClickListener {
+            if (selectedDevice == null) {
+                showStatus("Primero escanea BLE y selecciona un dispositivo de la lista.")
+                return@setOnClickListener
+            }
+            connectSelectedDevice()
         }
 
         binding.skipButton.setOnClickListener {
@@ -127,10 +126,10 @@ class ConnectDeviceActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        timeoutHandler.removeCallbacks(timeoutRunnable)
-        timeoutHandler.removeCallbacks(stopScanRunnable)
+        mainHandler.removeCallbacks(connectTimeout)
+        mainHandler.removeCallbacks(scanTimeout)
         stopBleScan()
-        stopBleService()
+        bleManager?.disconnect()
         super.onDestroy()
     }
 
@@ -138,21 +137,8 @@ class ConnectDeviceActivity : AppCompatActivity() {
         val missing = requiredPermissions().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-
         if (missing.isEmpty()) {
             ensureBluetoothAndScan()
-        } else {
-            permissionsLauncher.launch(missing.toTypedArray())
-        }
-    }
-
-    private fun requestPermissionsAndConnect() {
-        val missing = requiredPermissions().filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (missing.isEmpty()) {
-            ensureBluetoothAndConnect()
         } else {
             permissionsLauncher.launch(missing.toTypedArray())
         }
@@ -161,7 +147,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private fun ensureBluetoothAndScan() {
         val adapter = bluetoothAdapter
         if (adapter == null) {
-            showStatus("Este teléfono no tiene Bluetooth disponible para escaneo BLE.")
+            showStatus("Este equipo no tiene Bluetooth disponible.")
             return
         }
         if (!adapter.isEnabled) {
@@ -169,19 +155,6 @@ class ConnectDeviceActivity : AppCompatActivity() {
             return
         }
         startBleScan()
-    }
-
-    private fun ensureBluetoothAndConnect() {
-        val adapter = bluetoothAdapter
-        if (adapter == null) {
-            showStatus("Este teléfono no tiene Bluetooth disponible para el Regula 7310.")
-            return
-        }
-        if (!adapter.isEnabled) {
-            enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
-            return
-        }
-        startBluetoothService()
     }
 
     @SuppressLint("MissingPermission")
@@ -193,6 +166,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
             return
         }
 
+        selectedDevice = null
         discoveredDevices.clear()
         devicesAdapter.clear()
         devicesAdapter.notifyDataSetChanged()
@@ -204,8 +178,8 @@ class ConnectDeviceActivity : AppCompatActivity() {
             .build()
 
         bleScanner?.startScan(null, settings, nativeScanCallback)
-        timeoutHandler.removeCallbacks(stopScanRunnable)
-        timeoutHandler.postDelayed(stopScanRunnable, 8_000)
+        mainHandler.removeCallbacks(scanTimeout)
+        mainHandler.postDelayed(scanTimeout, 8_000)
     }
 
     @SuppressLint("MissingPermission")
@@ -216,55 +190,89 @@ class ConnectDeviceActivity : AppCompatActivity() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun startBluetoothService() {
-        if (isBleServiceConnected && bleManager?.isConnected == true && !DocumentReader.Instance().isReady) {
-            prepareDatabaseAndInitialize()
-            return
+    private fun connectSelectedDevice() {
+        val device = selectedDevice ?: return
+        stopBleScan()
+
+        if (bleManager == null) {
+            bleManager = BLEWrapper(this, bleCallbacks)
         }
 
-        if (isBleServiceConnected) return
-
-        val deviceName = configStore.load().deviceName
-        showDialog("Buscando $deviceName")
-
-        val bleIntent = Intent(this, RegulaBleService::class.java).apply {
-            putExtra(RegulaBleService.DEVICE_NAME, deviceName)
-        }
-        startService(bleIntent)
-        bindService(bleIntent, bleConnection, BIND_AUTO_CREATE)
+        showDialog("Conectando ${device.name ?: device.address}")
+        mainHandler.removeCallbacks(connectTimeout)
+        mainHandler.postDelayed(connectTimeout, 10_000)
+        bleManager?.connect(device)
     }
 
-    private val bleConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            isBleServiceConnected = true
-            val bleService = (service as RegulaBleService.LocalBinder).service
-            bleManager = bleService.bleManager
+    private val bleCallbacks = object : BleManagerCallback {
+        override fun onDeviceSearching() = Unit
 
-            if (DocumentReader.Instance().isReady) {
-                launchMain()
-                return
-            }
+        override fun onDeviceStopSearching() = Unit
 
-            if (bleManager?.isConnected == true) {
-                prepareDatabaseAndInitialize()
-                return
-            }
-
-            timeoutHandler.postDelayed(timeoutRunnable, 10_000)
-            bleManager?.addCallback(bleCallback)
+        override fun onDeviceConnecting(device: BluetoothDevice) {
+            showStatus("Conectando con ${device.name ?: device.address}...")
         }
 
-        override fun onServiceDisconnected(name: ComponentName) {
-            isBleServiceConnected = false
+        override fun onDeviceConnected(device: BluetoothDevice) {
+            showStatus("Conectado a ${device.name ?: device.address}. Esperando autenticador...")
         }
-    }
 
-    private val bleCallback: BleManagerCallback = object : BleWrapperCallback() {
         override fun onDeviceReady() {
-            timeoutHandler.removeCallbacks(timeoutRunnable)
-            bleManager?.removeCallback(this)
+            mainHandler.removeCallbacks(connectTimeout)
             prepareDatabaseAndInitialize()
         }
+
+        override fun onDeviceDisconnecting(device: BluetoothDevice) = Unit
+
+        override fun onDeviceDisconnected(device: BluetoothDevice) {
+            showStatus("Desconectado: ${device.name ?: device.address}")
+        }
+
+        override fun onLinkLossOccurred(device: BluetoothDevice) {
+            showStatus("Se perdió la conexión con ${device.name ?: device.address}")
+        }
+
+        override fun onServicesDiscovered(device: BluetoothDevice) = Unit
+
+        override fun onError(device: BluetoothDevice?, message: String?, code: Int) {
+            mainHandler.removeCallbacks(connectTimeout)
+            dismissDialog()
+            showStatus("Error Bluetooth ($code): ${message ?: "sin detalle"}")
+        }
+
+        override fun onBatteryValueReceived(value: Int) = Unit
+
+        override fun onCharacteristicWrite(
+            gatt: android.bluetooth.BluetoothGatt,
+            characteristic: android.bluetooth.BluetoothGattCharacteristic,
+        ) = Unit
+
+        override fun onCharacteristicNotified(
+            gatt: android.bluetooth.BluetoothGatt,
+            characteristic: android.bluetooth.BluetoothGattCharacteristic,
+        ) = Unit
+
+        override fun onCardStatusChanged(data: ByteArray, present: Boolean) = Unit
+
+        override fun onReceivedAPDUResponse(data: ByteArray) = Unit
+
+        override fun onMtuChanged(mtu: Int) = Unit
+
+        override fun onReceivedATRResponse(data: ByteArray) = Unit
+
+        override fun onParametersResponse(data: ByteArray) = Unit
+
+        override fun onStartFlashing() = Unit
+
+        override fun onStartFlashingWithDelay() = Unit
+
+        override fun onStopBeforeFinishFlashing() = Unit
+
+        override fun onStopFlashing() = Unit
+
+        override fun onStopFlashingWithDelay() = Unit
+
+        override fun onGotLicense(success: Boolean, message: String, data: ByteArray) = Unit
     }
 
     private fun prepareDatabaseAndInitialize() {
@@ -297,7 +305,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
         val manager = bleManager
         if (manager == null) {
             dismissDialog()
-            showStatus("No se pudo obtener la licencia del Regula 7310.")
+            showStatus("No se pudo preparar el Regula 7310 para inicialización.")
             return
         }
 
@@ -322,14 +330,6 @@ class ConnectDeviceActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun stopBleService() {
-        timeoutHandler.removeCallbacks(timeoutRunnable)
-        if (isBleServiceConnected) {
-            runCatching { unbindService(bleConnection) }
-            isBleServiceConnected = false
-        }
-    }
-
     private val nativeScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             addScanResult(result.device)
@@ -342,9 +342,8 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun addScanResult(device: BluetoothDevice) {
-        val name = device.name?.trim().orEmpty()
-        if (name.isBlank()) return
-        val key = "${name}|${device.address}"
+        val name = device.name?.trim().orEmpty().ifBlank { "(sin nombre)" }
+        val key = "$name|${device.address}"
         if (discoveredDevices.containsKey(key)) return
         discoveredDevices[key] = device
         runOnUiThread {
@@ -368,7 +367,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
         dismissDialog()
         loadingDialog = AlertDialog.Builder(this)
             .setTitle(title)
-            .setMessage("Mantén el Regula 7310 encendido y cerca del teléfono.")
+            .setMessage("Mantén el Regula 7310 activo y cerca del equipo.")
             .setCancelable(false)
             .show()
     }
