@@ -3,7 +3,12 @@ package com.unum.regula
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
@@ -13,6 +18,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -35,6 +41,10 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private var bleManager: BLEWrapper? = null
     private var isBleServiceConnected = false
     private var loadingDialog: AlertDialog? = null
+    private var bleScanner: BluetoothLeScanner? = null
+    private var isScanning = false
+    private val discoveredDevices = linkedMapOf<String, BluetoothDevice>()
+    private lateinit var devicesAdapter: ArrayAdapter<String>
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter
@@ -45,6 +55,15 @@ class ConnectDeviceActivity : AppCompatActivity() {
         dismissDialog()
         stopBleService()
         showStatus("No se pudo conectar al Regula 7310. Verifica que esté encendido y con Bluetooth activo.")
+    }
+
+    private val stopScanRunnable = Runnable {
+        stopBleScan()
+        if (discoveredDevices.isEmpty()) {
+            showStatus("No se detectaron dispositivos BLE. Enciende el 7310 e inténtalo otra vez.")
+        } else {
+            showStatus("Selecciona el dispositivo correcto de la lista y luego toca conectar.")
+        }
     }
 
     private val permissionsLauncher = registerForActivityResult(
@@ -76,6 +95,16 @@ class ConnectDeviceActivity : AppCompatActivity() {
         configStore = ConfigStore(this)
         val config = configStore.load()
         binding.deviceNameInput.setText(config.deviceName)
+        devicesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
+        binding.devicesList.adapter = devicesAdapter
+        binding.devicesList.setOnItemClickListener { _, _, position, _ ->
+            val selected = devicesAdapter.getItem(position).orEmpty()
+            val name = selected.substringBefore(" | ").trim()
+            binding.deviceNameInput.setText(name)
+            val updated = configStore.load().copy(deviceName = name)
+            configStore.save(updated)
+            showStatus("Dispositivo seleccionado: $name")
+        }
 
         if (DocumentReader.Instance().isReady) {
             launchMain()
@@ -83,9 +112,13 @@ class ConnectDeviceActivity : AppCompatActivity() {
         }
 
         binding.connectButton.setOnClickListener {
-            val updated = config.copy(deviceName = binding.deviceNameInput.text?.toString().orEmpty().trim().ifBlank { "Regula 7310" })
+            val updated = configStore.load().copy(deviceName = binding.deviceNameInput.text?.toString().orEmpty().trim().ifBlank { "Regula 7310" })
             configStore.save(updated)
             requestPermissionsAndConnect()
+        }
+
+        binding.scanButton.setOnClickListener {
+            requestPermissionsAndScan()
         }
 
         binding.skipButton.setOnClickListener {
@@ -95,8 +128,22 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         timeoutHandler.removeCallbacks(timeoutRunnable)
+        timeoutHandler.removeCallbacks(stopScanRunnable)
+        stopBleScan()
         stopBleService()
         super.onDestroy()
+    }
+
+    private fun requestPermissionsAndScan() {
+        val missing = requiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isEmpty()) {
+            ensureBluetoothAndScan()
+        } else {
+            permissionsLauncher.launch(missing.toTypedArray())
+        }
     }
 
     private fun requestPermissionsAndConnect() {
@@ -111,6 +158,19 @@ class ConnectDeviceActivity : AppCompatActivity() {
         }
     }
 
+    private fun ensureBluetoothAndScan() {
+        val adapter = bluetoothAdapter
+        if (adapter == null) {
+            showStatus("Este teléfono no tiene Bluetooth disponible para escaneo BLE.")
+            return
+        }
+        if (!adapter.isEnabled) {
+            enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            return
+        }
+        startBleScan()
+    }
+
     private fun ensureBluetoothAndConnect() {
         val adapter = bluetoothAdapter
         if (adapter == null) {
@@ -122,6 +182,37 @@ class ConnectDeviceActivity : AppCompatActivity() {
             return
         }
         startBluetoothService()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startBleScan() {
+        val adapter = bluetoothAdapter ?: return
+        bleScanner = adapter.bluetoothLeScanner
+        if (bleScanner == null) {
+            showStatus("No se pudo iniciar el escáner BLE.")
+            return
+        }
+
+        discoveredDevices.clear()
+        devicesAdapter.clear()
+        devicesAdapter.notifyDataSetChanged()
+        showStatus("Escaneando dispositivos BLE cercanos...")
+        isScanning = true
+
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        bleScanner?.startScan(null, settings, nativeScanCallback)
+        timeoutHandler.removeCallbacks(stopScanRunnable)
+        timeoutHandler.postDelayed(stopScanRunnable, 8_000)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopBleScan() {
+        if (!isScanning) return
+        runCatching { bleScanner?.stopScan(nativeScanCallback) }
+        isScanning = false
     }
 
     @SuppressLint("MissingPermission")
@@ -236,6 +327,29 @@ class ConnectDeviceActivity : AppCompatActivity() {
         if (isBleServiceConnected) {
             runCatching { unbindService(bleConnection) }
             isBleServiceConnected = false
+        }
+    }
+
+    private val nativeScanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            addScanResult(result.device)
+        }
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>) {
+            results.forEach { addScanResult(it.device) }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun addScanResult(device: BluetoothDevice) {
+        val name = device.name?.trim().orEmpty()
+        if (name.isBlank()) return
+        val key = "${name}|${device.address}"
+        if (discoveredDevices.containsKey(key)) return
+        discoveredDevices[key] = device
+        runOnUiThread {
+            devicesAdapter.add("$name | ${device.address}")
+            devicesAdapter.notifyDataSetChanged()
         }
     }
 
