@@ -43,6 +43,10 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    androidResources {
+        noCompress += "Regula/faceSdkResource.dat"
+    }
 }
 
 dependencies {
@@ -56,7 +60,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    implementation("com.regula.documentreader.core:fullrfid:+@aar")
+    implementation("com.regula.btdevice:api:9.1.+@aar")
+    implementation("com.regula.documentreader.core:fullauthrfid:9.4.+@aar")
     implementation("com.regula.documentreader:api:+@aar") {
         isTransitive = true
     }

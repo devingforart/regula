@@ -1,15 +1,22 @@
 <resources>
     <string name="app_name">Regula Capture</string>
-    <string name="app_title">Regula Android Capture</string>
-    <string name="app_subtitle">Captura documentos con Regula, extrae resultados de seguridad y envía imágenes y JSON a tu API REST.</string>
+    <string name="app_title">Regula 7310 Capture</string>
+    <string name="app_subtitle">Usa el Regula 7310 para autenticidad óptica real, imágenes UV/IR y envío de resultados a tu API.</string>
     <string name="base_url_hint">Base URL API, ej. https://api.tudominio.com</string>
     <string name="api_token_hint">Bearer token API</string>
     <string name="session_tag_hint">Tag o referencia de sesión</string>
     <string name="strict_security_label">Marcar controles de seguridad no ejecutados como fallo</string>
+    <string name="read_rfid_label">Leer chip RFID del documento si aplica</string>
     <string name="upload_images_label">Subir imágenes recortadas y originales</string>
-    <string name="prepare_db_label">Descargar base db.dat si no está embebida</string>
+    <string name="prepare_db_label">Descargar base FullAuth si no está embebida</string>
     <string name="save_config_button">Guardar configuración</string>
-    <string name="init_button">Inicializar Regula</string>
-    <string name="capture_button">Capturar documento y enviar</string>
+    <string name="init_button">Conectar Regula 7310</string>
+    <string name="capture_button">Autenticar documento y enviar</string>
     <string name="status_label">Estado</string>
+    <string name="connect_title">Conectar Regula 7310</string>
+    <string name="connect_subtitle">Enciende el 7310, activa Bluetooth en el teléfono y empareja el autenticador antes de capturar.</string>
+    <string name="device_name_hint">Nombre Bluetooth del dispositivo</string>
+    <string name="connect_button">Buscar y conectar 7310</string>
+    <string name="skip_button">Volver a la app</string>
+    <string name="connect_help">Si el 7310 está encendido y visible por Bluetooth, la app lo inicializará con su licencia de hardware y habilitará los checks de autenticidad.</string>
 </resources>

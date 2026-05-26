@@ -80,6 +80,12 @@
             android:text="@string/strict_security_label" />
 
         <CheckBox
+            android:id="@+id/readRfidCheckbox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/read_rfid_label" />
+
+        <CheckBox
             android:id="@+id/uploadImagesCheckbox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

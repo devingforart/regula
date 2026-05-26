@@ -1,6 +1,7 @@
 package com.unum.regula
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
@@ -9,23 +10,20 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.regula.documentreader.api.DocumentReader
-import com.regula.documentreader.api.completions.IDocumentReaderCompletion
-import com.regula.documentreader.api.completions.IDocumentReaderInitCompletion
-import com.regula.documentreader.api.completions.IDocumentReaderPrepareCompletion
 import com.regula.documentreader.api.enums.DocReaderAction
 import com.regula.documentreader.api.enums.Scenario
 import com.regula.documentreader.api.errors.DocumentReaderException
 import com.regula.documentreader.api.params.AuthenticityParams
-import com.regula.documentreader.api.params.DocReaderConfig
 import com.regula.documentreader.api.params.LivenessParams
 import com.regula.documentreader.api.results.DocumentReaderResults
 import com.regula.documentreader.api.config.ScannerConfig
+import com.regula.documentreader.api.completions.IDocumentReaderCompletion
+import com.regula.documentreader.api.completions.rfid.IRfidReaderCompletion
 import com.unum.regula.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import java.io.IOException
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
@@ -61,26 +59,32 @@ class MainActivity : AppCompatActivity() {
         binding.initButton.setOnClickListener {
             val config = collectConfig()
             configStore.save(config)
-            initializeReader(config)
+            startActivity(Intent(this, ConnectDeviceActivity::class.java))
         }
 
         binding.captureButton.setOnClickListener {
             val config = collectConfig()
             configStore.save(config)
-            if (!readerInitialized) {
-                initializeReader(config) {
-                    ensureCameraAndCapture()
-                }
+            if (!DocumentReader.Instance().isReady) {
+                renderStatus("Conecta primero el Regula 7310.")
+                startActivity(Intent(this, ConnectDeviceActivity::class.java))
             } else {
+                configureProcessParams(config)
                 ensureCameraAndCapture()
             }
         }
 
         renderStatus(
-            "Coloca `regula.license` en `app/src/main/assets/`.\n" +
-                "Opcional: coloca `db.dat` en `app/src/main/assets/Regula/` si no quieres descargar la base.\n" +
-                "Luego configura tu API e inicializa Regula."
+            "Configura tu API, conecta el Regula 7310 y luego captura con autenticidad."
         )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        readerInitialized = DocumentReader.Instance().isReady
+        if (readerInitialized) {
+            renderStatus("Regula 7310 conectado. Puedes capturar el documento.")
+        }
     }
 
     private fun bindConfig(config: AppConfig) = with(binding) {
@@ -88,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         apiTokenInput.setText(config.apiToken)
         sessionTagInput.setText(config.sessionTag)
         strictSecurityCheckbox.isChecked = config.strictSecurityChecks
+        readRfidCheckbox.isChecked = config.readRfidChip
         uploadImagesCheckbox.isChecked = config.uploadImages
         prepareDatabaseCheckbox.isChecked = config.prepareDatabase
     }
@@ -96,42 +101,12 @@ class MainActivity : AppCompatActivity() {
         baseUrl = binding.baseUrlInput.text?.toString().orEmpty().trim(),
         apiToken = binding.apiTokenInput.text?.toString().orEmpty().trim(),
         sessionTag = binding.sessionTagInput.text?.toString().orEmpty().trim().ifBlank { UUID.randomUUID().toString() },
+        deviceName = configStore.load().deviceName,
         strictSecurityChecks = binding.strictSecurityCheckbox.isChecked,
+        readRfidChip = binding.readRfidCheckbox.isChecked,
         uploadImages = binding.uploadImagesCheckbox.isChecked,
         prepareDatabase = binding.prepareDatabaseCheckbox.isChecked,
     )
-
-    private fun initializeReader(config: AppConfig, onReady: (() -> Unit)? = null) {
-        prepareDatabaseBeforeInit(config) {
-            doInitializeReader(config, onReady)
-        }
-    }
-
-    private fun doInitializeReader(config: AppConfig, onReady: (() -> Unit)? = null) {
-        val license = try {
-            assets.open("regula.license").use { it.readBytes() }
-        } catch (_: IOException) {
-            renderStatus("Falta `app/src/main/assets/regula.license`.")
-            return
-        }
-
-        val initConfig = DocReaderConfig(license)
-        renderStatus("Inicializando Regula...")
-
-        DocumentReader.Instance().initializeReader(this, initConfig, object : IDocumentReaderInitCompletion {
-            override fun onInitCompleted(success: Boolean, error: DocumentReaderException?) {
-                if (!success) {
-                    readerInitialized = false
-                    renderStatus("Falló la inicialización de Regula: ${error?.message ?: "sin detalle"}")
-                    return
-                }
-
-                configureProcessParams(config)
-                renderStatus("Regula listo.")
-                onReady?.invoke()
-            }
-        })
-    }
 
     private fun configureProcessParams(config: AppConfig) {
         val authenticityParams = AuthenticityParams.defaultParams()
@@ -139,29 +114,6 @@ class MainActivity : AppCompatActivity() {
         DocumentReader.Instance().processParams().authenticityParams = authenticityParams
         DocumentReader.Instance().processParams().strictSecurityChecks = config.strictSecurityChecks
         readerInitialized = true
-    }
-
-    private fun prepareDatabaseBeforeInit(config: AppConfig, onReady: () -> Unit) {
-        val hasEmbeddedDb = runCatching { assets.open("Regula/db.dat").close(); true }.getOrDefault(false)
-        if (hasEmbeddedDb || !config.prepareDatabase) {
-            onReady()
-            return
-        }
-
-        renderStatus("Descargando base `db.dat` compatible...")
-        DocumentReader.Instance().prepareDatabase(this, "Full", object : IDocumentReaderPrepareCompletion {
-            override fun onPrepareProgressChanged(progress: Int) {
-                renderStatus("Descargando base `db.dat`: $progress%")
-            }
-
-            override fun onPrepareCompleted(status: Boolean, error: DocumentReaderException?) {
-                if (!status) {
-                    renderStatus("No se pudo preparar la base de documentos: ${error?.message ?: "sin detalle"}")
-                    return
-                }
-                onReady()
-            }
-        })
     }
 
     private fun ensureCameraAndCapture() {
@@ -174,8 +126,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCapture() {
-        val scannerConfig = ScannerConfig.Builder(Scenario.SCENARIO_FULL_PROCESS).build()
-        renderStatus("Abriendo cámara de Regula...")
+        val scannerConfig = ScannerConfig.Builder(Scenario.SCENARIO_FULL_AUTH).build()
+        renderStatus("Abriendo autenticación con Regula 7310...")
         DocumentReader.Instance().startScanner(this, scannerConfig, object : IDocumentReaderCompletion {
             override fun onCompleted(action: Int, results: DocumentReaderResults?, error: DocumentReaderException?) {
                 when (action) {
@@ -183,7 +135,29 @@ class MainActivity : AppCompatActivity() {
                         if (results == null) {
                             renderStatus("La captura terminó sin resultados. ${error?.message ?: ""}".trim())
                         } else {
-                            handleCaptureResult(results)
+                            val config = collectConfig()
+                            if (config.readRfidChip && results.chipPage != 0) {
+                                renderStatus("Leyendo chip RFID del documento...")
+                                DocumentReader.Instance().startRFIDReader(
+                                    this@MainActivity,
+                                    object : IRfidReaderCompletion() {
+                                        override fun onCompleted(
+                                            rfidAction: Int,
+                                            rfidResults: DocumentReaderResults?,
+                                            rfidError: DocumentReaderException?,
+                                        ) {
+                                            if ((rfidAction == DocReaderAction.COMPLETE || rfidAction == DocReaderAction.CANCEL) && rfidResults != null) {
+                                                handleCaptureResult(rfidResults)
+                                            } else if (rfidError != null) {
+                                                renderStatus("RFID falló: ${rfidError.message}")
+                                                handleCaptureResult(results)
+                                            }
+                                        }
+                                    }
+                                )
+                            } else {
+                                handleCaptureResult(results)
+                            }
                         }
                     }
 
@@ -238,12 +212,19 @@ class MainActivity : AppCompatActivity() {
             appendLine("Captura enviada.")
             appendLine("sessionId: $sessionId")
             appendLine("documento: $docName")
-            appendLine("overallStatus: $overall")
-            appendLine("securityStatus: $security")
-            appendLine("imageQAStatus: $imageQa")
+            appendLine("overallStatus: ${checkResultName(overall)}")
+            appendLine("securityStatus: ${checkResultName(security)}")
+            appendLine("imageQAStatus: ${checkResultName(imageQa)}")
             appendLine("imagenes procesadas: $imageCount")
             appendLine("respuesta API: $apiResponse")
         }
+    }
+
+    private fun checkResultName(value: Int?): String = when (value) {
+        1 -> "OK"
+        0 -> "ERROR"
+        2 -> "NO_EJECUTADO"
+        else -> "DESCONOCIDO($value)"
     }
 
     private fun renderStatus(message: String) {
