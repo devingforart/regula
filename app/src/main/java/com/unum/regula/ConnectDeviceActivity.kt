@@ -38,7 +38,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private var bleScanner: BluetoothLeScanner? = null
     private var isScanning = false
     private var selectedDevice: BluetoothDevice? = null
-    private val discoveredDevices = linkedMapOf<String, BluetoothDevice>()
+    private val discoveredDevices = linkedMapOf<String, BleCandidate>()
     private lateinit var devicesAdapter: ArrayAdapter<String>
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -55,9 +55,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private val scanTimeout = Runnable {
         stopBleScan()
         if (discoveredDevices.isEmpty()) {
-            showStatus("No se detectaron dispositivos BLE. Asegúrate de que la workstation esté activa.")
+            showStatus("No se detectaron dispositivos BLE. Asegúrate de que el equipo Regula esté encendido, con Bluetooth activo y cerca.")
         } else {
-            showStatus("Selecciona un dispositivo de la lista y luego toca conectar.")
+            showStatus("Selecciona una MAC de la lista. Si todos salen sin nombre, prueba primero el de señal más alta.")
         }
     }
 
@@ -88,19 +88,23 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         configStore = ConfigStore(this)
         val config = configStore.load()
-        binding.deviceNameInput.setText(config.deviceName)
+        binding.deviceNameInput.setText(savedDeviceLabel(config))
 
         devicesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
         binding.devicesList.adapter = devicesAdapter
         binding.devicesList.setOnItemClickListener { _, _, position, _ ->
-            val selected = devicesAdapter.getItem(position).orEmpty()
-            val address = selected.substringAfterLast(" | ").trim()
-            val device = discoveredDevices.values.firstOrNull { it.address == address } ?: return@setOnItemClickListener
+            val candidate = discoveredDevices.values.sortedByDescending { it.rssi }.elementAtOrNull(position)
+                ?: return@setOnItemClickListener
+            val device = candidate.device
             selectedDevice = device
-            val name = device.name?.trim().orEmpty().ifBlank { address }
-            binding.deviceNameInput.setText(name)
-            configStore.save(configStore.load().copy(deviceName = name))
-            showStatus("Seleccionado: $name (${device.address})")
+            binding.deviceNameInput.setText(candidate.savedLabel)
+            configStore.save(
+                configStore.load().copy(
+                    deviceName = candidate.displayName,
+                    deviceAddress = device.address,
+                )
+            )
+            showStatus("Seleccionado: ${candidate.displayLabel}. Ahora toca conectar.")
         }
 
         if (DocumentReader.Instance().isReady) {
@@ -114,7 +118,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         binding.connectButton.setOnClickListener {
             if (selectedDevice == null) {
-                showStatus("Primero escanea BLE y selecciona un dispositivo de la lista.")
+                showStatus("Primero escanea BLE y selecciona una MAC de la lista.")
                 return@setOnClickListener
             }
             connectSelectedDevice()
@@ -170,7 +174,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
         discoveredDevices.clear()
         devicesAdapter.clear()
         devicesAdapter.notifyDataSetChanged()
-        showStatus("Escaneando dispositivos BLE cercanos...")
+        showStatus("Escaneando BLE. Los dispositivos pueden aparecer como '(sin nombre)'; usa MAC y señal para elegir.")
         isScanning = true
 
         val settings = ScanSettings.Builder()
@@ -196,11 +200,12 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         if (bleManager == null) {
             bleManager = BLEWrapper(this, bleCallbacks)
+            bleManager?.initializeBleManager()
         }
 
-        showDialog("Conectando ${device.name ?: device.address}")
+        showDialog("Conectando ${deviceLabel(device)}")
         mainHandler.removeCallbacks(connectTimeout)
-        mainHandler.postDelayed(connectTimeout, 10_000)
+        mainHandler.postDelayed(connectTimeout, 20_000)
         bleManager?.connect(device)
     }
 
@@ -210,11 +215,11 @@ class ConnectDeviceActivity : AppCompatActivity() {
         override fun onDeviceStopSearching() = Unit
 
         override fun onDeviceConnecting(device: BluetoothDevice) {
-            showStatus("Conectando con ${device.name ?: device.address}...")
+            showStatus("Conectando con ${deviceLabel(device)}...")
         }
 
         override fun onDeviceConnected(device: BluetoothDevice) {
-            showStatus("Conectado a ${device.name ?: device.address}. Esperando autenticador...")
+            showStatus("Conectado a ${deviceLabel(device)}. Esperando autenticador...")
         }
 
         override fun onDeviceReady() {
@@ -225,14 +230,16 @@ class ConnectDeviceActivity : AppCompatActivity() {
         override fun onDeviceDisconnecting(device: BluetoothDevice) = Unit
 
         override fun onDeviceDisconnected(device: BluetoothDevice) {
-            showStatus("Desconectado: ${device.name ?: device.address}")
+            showStatus("Desconectado: ${deviceLabel(device)}")
         }
 
         override fun onLinkLossOccurred(device: BluetoothDevice) {
-            showStatus("Se perdió la conexión con ${device.name ?: device.address}")
+            showStatus("Se perdió la conexión con ${deviceLabel(device)}")
         }
 
-        override fun onServicesDiscovered(device: BluetoothDevice) = Unit
+        override fun onServicesDiscovered(device: BluetoothDevice) {
+            showStatus("Servicios BLE detectados en ${deviceLabel(device)}. Preparando autenticador...")
+        }
 
         override fun onError(device: BluetoothDevice?, message: String?, code: Int) {
             mainHandler.removeCallbacks(connectTimeout)
@@ -332,24 +339,40 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
     private val nativeScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            addScanResult(result.device)
+            addScanResult(result)
         }
 
         override fun onBatchScanResults(results: MutableList<ScanResult>) {
-            results.forEach { addScanResult(it.device) }
+            results.forEach { addScanResult(it) }
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun addScanResult(device: BluetoothDevice) {
-        val name = device.name?.trim().orEmpty().ifBlank { "(sin nombre)" }
-        val key = "$name|${device.address}"
-        if (discoveredDevices.containsKey(key)) return
-        discoveredDevices[key] = device
+    private fun addScanResult(result: ScanResult) {
+        val device = result.device
+        discoveredDevices[device.address] = BleCandidate(device, result.rssi)
         runOnUiThread {
-            devicesAdapter.add("$name | ${device.address}")
-            devicesAdapter.notifyDataSetChanged()
+            renderDevicesList()
         }
+    }
+
+    private fun renderDevicesList() {
+        devicesAdapter.clear()
+        discoveredDevices.values
+            .sortedByDescending { it.rssi }
+            .forEach { devicesAdapter.add(it.displayLabel) }
+        devicesAdapter.notifyDataSetChanged()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun deviceLabel(device: BluetoothDevice): String {
+        val name = device.name?.trim().orEmpty()
+        return if (name.isBlank()) device.address else "$name (${device.address})"
+    }
+
+    private fun savedDeviceLabel(config: AppConfig): String {
+        if (config.deviceAddress.isBlank()) return config.deviceName
+        return "${config.deviceName} (${config.deviceAddress})"
     }
 
     private fun requiredPermissions(): List<String> {
@@ -382,5 +405,20 @@ class ConnectDeviceActivity : AppCompatActivity() {
             binding.statusText.text = message
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private data class BleCandidate(
+        val device: BluetoothDevice,
+        val rssi: Int,
+    ) {
+        val displayName: String
+            @SuppressLint("MissingPermission")
+            get() = device.name?.trim().orEmpty().ifBlank { "(sin nombre)" }
+
+        val savedLabel: String
+            get() = "$displayName (${device.address})"
+
+        val displayLabel: String
+            get() = "$displayName | ${device.address} | señal $rssi dBm"
     }
 }

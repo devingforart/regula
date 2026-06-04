@@ -14,11 +14,11 @@
     <string name="capture_button">Autenticar documento y enviar</string>
     <string name="status_label">Estado</string>
     <string name="connect_title">Conectar Regula 7310</string>
-    <string name="connect_subtitle">Enciende el 7310, activa Bluetooth en el teléfono y empareja el autenticador antes de capturar.</string>
-    <string name="device_name_hint">Nombre Bluetooth del dispositivo</string>
-    <string name="connect_button">Buscar y conectar 7310</string>
+    <string name="connect_subtitle">Enciende el equipo Regula como un teléfono normal, activa Bluetooth y escanea. Si aparece sin nombre, usa la MAC con mejor señal.</string>
+    <string name="device_name_hint">Dispositivo BLE seleccionado</string>
+    <string name="connect_button">Conectar MAC seleccionada</string>
     <string name="scan_button">Escanear dispositivos BLE</string>
     <string name="devices_found_label">Dispositivos detectados</string>
     <string name="skip_button">Volver a la app</string>
-    <string name="connect_help">Si el 7310 está encendido y visible por Bluetooth, la app lo inicializará con su licencia de hardware y habilitará los checks de autenticidad.</string>
+    <string name="connect_help">No dependas del nombre: muchos BLE aparecen como sin nombre. Selecciona primero el de señal más alta, toca conectar y luego captura el documento.</string>
 </resources>
