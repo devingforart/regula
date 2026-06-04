@@ -9,11 +9,14 @@ import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.widget.ArrayAdapter
 import android.widget.Toast
@@ -22,6 +25,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.regula.common.ble.BLEWrapper
+import com.regula.common.ble.RegulaBleService
 import com.regula.common.ble.callback.BleManagerCallback
 import com.regula.documentreader.api.DocumentReader
 import com.regula.documentreader.api.completions.IDocumentReaderInitCompletion
@@ -42,6 +46,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private var pendingCandidate: BleCandidate? = null
     private var connectionAttempts: List<ConnectionMethod> = emptyList()
     private var connectionAttemptIndex = 0
+    private var isBleServiceConnected = false
     private val discoveredDevices = linkedMapOf<String, BleCandidate>()
     private lateinit var devicesAdapter: ArrayAdapter<String>
 
@@ -52,6 +57,13 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val connectTimeout = Runnable {
         tryNextConnectionMethod("Tiempo agotado")
+    }
+
+    private val serviceTimeout = Runnable {
+        stopRegulaBleService()
+        showStatus("El servicio Regula no conectó. Probando conexión manual...")
+        connectionAttemptIndex = 0
+        tryConnectionAttempt("Servicio Regula sin respuesta")
     }
 
     private val scanTimeout = Runnable {
@@ -134,7 +146,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(connectTimeout)
         mainHandler.removeCallbacks(scanTimeout)
+        mainHandler.removeCallbacks(serviceTimeout)
         stopBleScan()
+        stopRegulaBleService()
         bleManager?.disconnect()
         super.onDestroy()
     }
@@ -210,7 +224,11 @@ class ConnectDeviceActivity : AppCompatActivity() {
         pendingCandidate = candidate
         connectionAttempts = buildConnectionAttempts(candidate)
         connectionAttemptIndex = 0
-        tryConnectionAttempt("Inicio")
+        if (candidate.hasRealName) {
+            connectWithRegulaService(candidate)
+        } else {
+            tryConnectionAttempt("Inicio")
+        }
     }
 
     private fun ensureBleManager() {
@@ -261,6 +279,46 @@ class ConnectDeviceActivity : AppCompatActivity() {
         attempts += ConnectionMethod.UUID
         attempts += ConnectionMethod.AUTO
         return attempts.distinct()
+    }
+
+    private fun connectWithRegulaService(candidate: BleCandidate) {
+        stopRegulaBleService()
+        DocumentReader.Instance().functionality().edit().setBtDeviceName(candidate.displayName).apply()
+        showDialog("Conectando ${candidate.displayName}")
+        showStatus("Conectando con servicio oficial Regula: ${candidate.displayName}")
+        val bleIntent = Intent(this, RegulaBleService::class.java).apply {
+            putExtra(RegulaBleService.DEVICE_NAME, candidate.displayName)
+        }
+        startService(bleIntent)
+        bindService(bleIntent, regulaBleConnection, BIND_AUTO_CREATE)
+        mainHandler.removeCallbacks(serviceTimeout)
+        mainHandler.postDelayed(serviceTimeout, 12_000)
+    }
+
+    private fun stopRegulaBleService() {
+        mainHandler.removeCallbacks(serviceTimeout)
+        if (isBleServiceConnected) {
+            runCatching { unbindService(regulaBleConnection) }
+            isBleServiceConnected = false
+        }
+        runCatching { stopService(Intent(this, RegulaBleService::class.java)) }
+    }
+
+    private val regulaBleConnection: ServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            isBleServiceConnected = true
+            val bleService = (service as RegulaBleService.LocalBinder).service
+            bleManager = bleService.bleManager
+            bleManager?.addCallback(bleCallbacks)
+            if (bleManager?.isConnected == true || bleManager?.isDeviceReady == true) {
+                mainHandler.removeCallbacks(serviceTimeout)
+                prepareDatabaseAndInitialize()
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            isBleServiceConnected = false
+        }
     }
 
     private val bleCallbacks = object : BleManagerCallback {
