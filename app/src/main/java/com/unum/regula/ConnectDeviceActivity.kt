@@ -38,6 +38,10 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private var bleScanner: BluetoothLeScanner? = null
     private var isScanning = false
     private var selectedDevice: BluetoothDevice? = null
+    private var selectedCandidate: BleCandidate? = null
+    private var pendingCandidate: BleCandidate? = null
+    private var connectionAttempts: List<ConnectionMethod> = emptyList()
+    private var connectionAttemptIndex = 0
     private val discoveredDevices = linkedMapOf<String, BleCandidate>()
     private lateinit var devicesAdapter: ArrayAdapter<String>
 
@@ -47,9 +51,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val connectTimeout = Runnable {
-        dismissDialog()
-        bleManager?.disconnect()
-        showStatus("No se pudo conectar al Regula 7310. Selecciona otro dispositivo o verifica que el equipo esté activo.")
+        tryNextConnectionMethod("Tiempo agotado")
     }
 
     private val scanTimeout = Runnable {
@@ -96,6 +98,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
             val candidate = sortedCandidates().elementAtOrNull(position) ?: return@setOnItemClickListener
             val device = candidate.device
             selectedDevice = device
+            selectedCandidate = candidate
             binding.deviceNameInput.setText(candidate.savedLabel)
             configStore.save(
                 configStore.load().copy(
@@ -170,18 +173,21 @@ class ConnectDeviceActivity : AppCompatActivity() {
         }
 
         selectedDevice = null
+        selectedCandidate = null
         discoveredDevices.clear()
         devicesAdapter.clear()
         devicesAdapter.notifyDataSetChanged()
         addBondedDevices(adapter)
         showStatus("Buscando emparejados y BLE cercanos. Si no hay nombre, usa la MAC con mejor señal.")
         isScanning = true
+        ensureBleManager()
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
         bleScanner?.startScan(null, settings, nativeScanCallback)
+        bleManager?.startDeviceScan(regulaScanCallback)
         mainHandler.removeCallbacks(scanTimeout)
         mainHandler.postDelayed(scanTimeout, 8_000)
     }
@@ -190,23 +196,71 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private fun stopBleScan() {
         if (!isScanning) return
         runCatching { bleScanner?.stopScan(nativeScanCallback) }
+        runCatching { bleManager?.stopDeviceScan() }
         isScanning = false
     }
 
     @SuppressLint("MissingPermission")
     private fun connectSelectedDevice() {
-        val device = selectedDevice ?: return
+        val candidate = selectedCandidate ?: selectedDevice?.let { BleCandidate(it, Int.MIN_VALUE) } ?: return
         stopBleScan()
 
-        if (bleManager == null) {
-            bleManager = BLEWrapper(this, bleCallbacks)
-            bleManager?.initializeBleManager()
-        }
+        ensureBleManager()
 
-        showDialog("Conectando ${deviceLabel(device)}")
-        mainHandler.removeCallbacks(connectTimeout)
-        mainHandler.postDelayed(connectTimeout, 20_000)
-        bleManager?.connect(device)
+        pendingCandidate = candidate
+        connectionAttempts = buildConnectionAttempts(candidate)
+        connectionAttemptIndex = 0
+        tryConnectionAttempt("Inicio")
+    }
+
+    private fun ensureBleManager() {
+        if (bleManager != null) return
+        bleManager = BLEWrapper(this, bleCallbacks)
+        bleManager?.initializeBleManager()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun tryConnectionAttempt(reason: String) {
+        mainHandler.post {
+            val candidate = pendingCandidate ?: return@post
+            val method = connectionAttempts.getOrNull(connectionAttemptIndex)
+            if (method == null) {
+                dismissDialog()
+                bleManager?.disconnect()
+                showStatus("No se pudo conectar al Regula 7310. Ultimo paso: $reason. Prueba el otro HF o revisa que la app oficial no tenga tomado el Bluetooth.")
+                return@post
+            }
+
+            runCatching { bleManager?.disconnect() }
+            showDialog("Conectando ${candidate.displayName}")
+            mainHandler.removeCallbacks(connectTimeout)
+            mainHandler.postDelayed(connectTimeout, 15_000)
+            showStatus("Intento ${connectionAttemptIndex + 1}/${connectionAttempts.size}: ${method.label} con ${candidate.displayLabel}")
+
+            when (method) {
+                ConnectionMethod.NAME -> bleManager?.connect(candidate.displayName)
+                ConnectionMethod.DEVICE -> bleManager?.connect(candidate.device)
+                ConnectionMethod.UUID -> bleManager?.connectUUID(candidate.device.address)
+                ConnectionMethod.AUTO -> bleManager?.connect()
+            }
+        }
+    }
+
+    private fun tryNextConnectionMethod(reason: String) {
+        mainHandler.post {
+            mainHandler.removeCallbacks(connectTimeout)
+            connectionAttemptIndex += 1
+            tryConnectionAttempt(reason)
+        }
+    }
+
+    private fun buildConnectionAttempts(candidate: BleCandidate): List<ConnectionMethod> {
+        val attempts = mutableListOf<ConnectionMethod>()
+        if (candidate.hasRealName) attempts += ConnectionMethod.NAME
+        attempts += ConnectionMethod.DEVICE
+        attempts += ConnectionMethod.UUID
+        attempts += ConnectionMethod.AUTO
+        return attempts.distinct()
     }
 
     private val bleCallbacks = object : BleManagerCallback {
@@ -224,6 +278,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         override fun onDeviceReady() {
             mainHandler.removeCallbacks(connectTimeout)
+            showStatus("Autenticador listo. Inicializando DocumentReader...")
             prepareDatabaseAndInitialize()
         }
 
@@ -243,8 +298,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         override fun onError(device: BluetoothDevice?, message: String?, code: Int) {
             mainHandler.removeCallbacks(connectTimeout)
-            dismissDialog()
-            showStatus("Error Bluetooth ($code): ${message ?: "sin detalle"}")
+            tryNextConnectionMethod("Error Bluetooth ($code): ${message ?: "sin detalle"}")
         }
 
         override fun onBatteryValueReceived(value: Int) = Unit
@@ -348,6 +402,22 @@ class ConnectDeviceActivity : AppCompatActivity() {
     }
 
     @SuppressLint("MissingPermission")
+    private val regulaScanCallback = BluetoothAdapter.LeScanCallback { device, rssi, _ ->
+        val current = discoveredDevices[device.address]
+        val knownName = current?.knownName ?: device.name?.trim().orEmpty().ifBlank { null }
+        discoveredDevices[device.address] = BleCandidate(
+            device = device,
+            rssi = rssi,
+            knownName = knownName,
+            source = mergeSource(current?.source, "Regula SDK"),
+        )
+        runOnUiThread {
+            renderDevicesList()
+        }
+    }
+
+
+    @SuppressLint("MissingPermission")
     private fun addBondedDevices(adapter: BluetoothAdapter) {
         adapter.bondedDevices.orEmpty().forEach { device ->
             val name = device.name?.trim().orEmpty()
@@ -372,7 +442,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
             ?: scanName.ifBlank { null }
             ?: deviceName.ifBlank { null }
         val source = if (current?.source == "emparejado") "emparejado + BLE" else "BLE"
-        discoveredDevices[device.address] = BleCandidate(device, result.rssi, knownName, source)
+        discoveredDevices[device.address] = BleCandidate(device, result.rssi, knownName, mergeSource(current?.source, source))
         runOnUiThread {
             renderDevicesList()
         }
@@ -398,6 +468,13 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private fun savedDeviceLabel(config: AppConfig): String {
         if (config.deviceAddress.isBlank()) return config.deviceName
         return "${config.deviceName} (${config.deviceAddress})"
+    }
+
+    private fun mergeSource(current: String?, next: String): String {
+        if (current.isNullOrBlank()) return next
+        return (current.split(" + ") + next.split(" + "))
+            .distinct()
+            .joinToString(" + ")
     }
 
     private fun requiredPermissions(): List<String> {
@@ -441,6 +518,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
         val isBonded: Boolean
             get() = source.startsWith("emparejado")
 
+        val hasRealName: Boolean
+            get() = displayName != "(sin nombre)"
+
         val displayName: String
             @SuppressLint("MissingPermission")
             get() = knownName ?: device.name?.trim().orEmpty().ifBlank { "(sin nombre)" }
@@ -453,5 +533,12 @@ class ConnectDeviceActivity : AppCompatActivity() {
                 val signal = if (rssi == Int.MAX_VALUE) "sin RSSI" else "señal $rssi dBm"
                 return "$displayName | ${device.address} | $source | $signal"
             }
+    }
+
+    private enum class ConnectionMethod(val label: String) {
+        NAME("por nombre"),
+        DEVICE("por dispositivo BLE"),
+        UUID("por MAC/UUID"),
+        AUTO("auto SDK Regula"),
     }
 }
