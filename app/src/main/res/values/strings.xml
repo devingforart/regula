@@ -14,11 +14,11 @@
     <string name="capture_button">Autenticar documento y enviar</string>
     <string name="status_label">Estado</string>
     <string name="connect_title">Conectar Regula 7310</string>
-    <string name="connect_subtitle">Enciende el equipo Regula como un teléfono normal, activa Bluetooth y escanea. Si aparece sin nombre, usa la MAC con mejor señal.</string>
+    <string name="connect_subtitle">Enciende el equipo Regula como un teléfono normal, activa Bluetooth y escanea. La app muestra emparejados primero y luego BLE cercanos.</string>
     <string name="device_name_hint">Dispositivo BLE seleccionado</string>
     <string name="connect_button">Conectar MAC seleccionada</string>
     <string name="scan_button">Escanear dispositivos BLE</string>
     <string name="devices_found_label">Dispositivos detectados</string>
     <string name="skip_button">Volver a la app</string>
-    <string name="connect_help">No dependas del nombre: muchos BLE aparecen como sin nombre. Selecciona primero el de señal más alta, toca conectar y luego captura el documento.</string>
+    <string name="connect_help">Si ya lo emparejaste en Ajustes de Android, debería aparecer con nombre. Si aparece sin nombre, selecciona la MAC con mejor señal y toca conectar.</string>
 </resources>

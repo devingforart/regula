@@ -57,7 +57,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
         if (discoveredDevices.isEmpty()) {
             showStatus("No se detectaron dispositivos BLE. Asegúrate de que el equipo Regula esté encendido, con Bluetooth activo y cerca.")
         } else {
-            showStatus("Selecciona una MAC de la lista. Si todos salen sin nombre, prueba primero el de señal más alta.")
+            showStatus("Selecciona un emparejado si aparece. Si todos salen sin nombre, usa la MAC con mejor señal.")
         }
     }
 
@@ -93,8 +93,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
         devicesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
         binding.devicesList.adapter = devicesAdapter
         binding.devicesList.setOnItemClickListener { _, _, position, _ ->
-            val candidate = discoveredDevices.values.sortedByDescending { it.rssi }.elementAtOrNull(position)
-                ?: return@setOnItemClickListener
+            val candidate = sortedCandidates().elementAtOrNull(position) ?: return@setOnItemClickListener
             val device = candidate.device
             selectedDevice = device
             binding.deviceNameInput.setText(candidate.savedLabel)
@@ -174,7 +173,8 @@ class ConnectDeviceActivity : AppCompatActivity() {
         discoveredDevices.clear()
         devicesAdapter.clear()
         devicesAdapter.notifyDataSetChanged()
-        showStatus("Escaneando BLE. Los dispositivos pueden aparecer como '(sin nombre)'; usa MAC y señal para elegir.")
+        addBondedDevices(adapter)
+        showStatus("Buscando emparejados y BLE cercanos. Si no hay nombre, usa la MAC con mejor señal.")
         isScanning = true
 
         val settings = ScanSettings.Builder()
@@ -348,9 +348,31 @@ class ConnectDeviceActivity : AppCompatActivity() {
     }
 
     @SuppressLint("MissingPermission")
+    private fun addBondedDevices(adapter: BluetoothAdapter) {
+        adapter.bondedDevices.orEmpty().forEach { device ->
+            val name = device.name?.trim().orEmpty()
+            val candidate = BleCandidate(
+                device = device,
+                rssi = Int.MAX_VALUE,
+                knownName = name.ifBlank { null },
+                source = "emparejado",
+            )
+            discoveredDevices[device.address] = candidate
+        }
+        renderDevicesList()
+    }
+
+    @SuppressLint("MissingPermission")
     private fun addScanResult(result: ScanResult) {
         val device = result.device
-        discoveredDevices[device.address] = BleCandidate(device, result.rssi)
+        val current = discoveredDevices[device.address]
+        val scanName = result.scanRecord?.deviceName?.trim().orEmpty()
+        val deviceName = device.name?.trim().orEmpty()
+        val knownName = current?.knownName
+            ?: scanName.ifBlank { null }
+            ?: deviceName.ifBlank { null }
+        val source = if (current?.source == "emparejado") "emparejado + BLE" else "BLE"
+        discoveredDevices[device.address] = BleCandidate(device, result.rssi, knownName, source)
         runOnUiThread {
             renderDevicesList()
         }
@@ -358,11 +380,14 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
     private fun renderDevicesList() {
         devicesAdapter.clear()
-        discoveredDevices.values
-            .sortedByDescending { it.rssi }
-            .forEach { devicesAdapter.add(it.displayLabel) }
+        sortedCandidates().forEach { devicesAdapter.add(it.displayLabel) }
         devicesAdapter.notifyDataSetChanged()
     }
+
+    private fun sortedCandidates(): List<BleCandidate> =
+        discoveredDevices.values.sortedWith(
+            compareByDescending<BleCandidate> { it.isBonded }.thenByDescending { it.rssi }
+        )
 
     @SuppressLint("MissingPermission")
     private fun deviceLabel(device: BluetoothDevice): String {
@@ -410,15 +435,23 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private data class BleCandidate(
         val device: BluetoothDevice,
         val rssi: Int,
+        val knownName: String? = null,
+        val source: String = "BLE",
     ) {
+        val isBonded: Boolean
+            get() = source.startsWith("emparejado")
+
         val displayName: String
             @SuppressLint("MissingPermission")
-            get() = device.name?.trim().orEmpty().ifBlank { "(sin nombre)" }
+            get() = knownName ?: device.name?.trim().orEmpty().ifBlank { "(sin nombre)" }
 
         val savedLabel: String
             get() = "$displayName (${device.address})"
 
         val displayLabel: String
-            get() = "$displayName | ${device.address} | señal $rssi dBm"
+            get() {
+                val signal = if (rssi == Int.MAX_VALUE) "sin RSSI" else "señal $rssi dBm"
+                return "$displayName | ${device.address} | $source | $signal"
+            }
     }
 }
