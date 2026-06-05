@@ -13,11 +13,13 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -91,9 +93,19 @@ class ConnectDeviceActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (bluetoothAdapter?.isEnabled == true) {
+            ensureLocationAndScan()
+        } else {
+            appendStatus("Activa Bluetooth para detectar el Regula 7310.")
+        }
+    }
+
+    private val enableLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (isLocationServiceEnabled()) {
             startBleScan()
         } else {
-            showStatus("Activa Bluetooth para detectar el Regula 7310.")
+            appendStatus("Activa Ubicación en Android. Regula la requiere para buscar/conectar el autenticador BLE.")
         }
     }
 
@@ -188,7 +200,23 @@ class ConnectDeviceActivity : AppCompatActivity() {
             enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
+        ensureLocationAndScan()
+    }
+
+    private fun ensureLocationAndScan() {
+        if (!isLocationServiceEnabled()) {
+            appendStatus("Ubicación de Android apagada. Abriendo ajustes; actívala y vuelve a la app.")
+            enableLocationLauncher.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            return
+        }
         startBleScan()
+    }
+
+    private fun isLocationServiceEnabled(): Boolean {
+        val locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+        val gpsEnabled = runCatching { locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)
+        val networkEnabled = runCatching { locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)
+        return gpsEnabled || networkEnabled
     }
 
     @SuppressLint("MissingPermission")
@@ -595,9 +623,8 @@ class ConnectDeviceActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions += Manifest.permission.BLUETOOTH_SCAN
             permissions += Manifest.permission.BLUETOOTH_CONNECT
-        } else {
-            permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
+        permissions += Manifest.permission.ACCESS_FINE_LOCATION
         return permissions
     }
 

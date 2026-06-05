@@ -61,8 +61,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     implementation("com.regula.btdevice:api:9.1.+@aar")
-    implementation("com.regula.documentreader.core:fullauthrfid:9.4.+@aar")
-    implementation("com.regula.documentreader:api:+@aar") {
+    implementation("com.regula.documentreader.core:fullauthrfid:9.5.+@aar")
+    implementation("com.regula.documentreader:api:9.5.+@aar") {
         isTransitive = true
     }
 }
