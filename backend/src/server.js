@@ -13,6 +13,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const dataRoot = path.join(projectRoot, 'data');
 const uploadsRoot = path.join(dataRoot, 'uploads');
 const sessionsRoot = path.join(dataRoot, 'sessions');
+const publicRoot = path.join(projectRoot, 'public');
 const port = Number(process.env.PORT || 8080);
 const requiredToken = process.env.API_TOKEN || '';
 
@@ -27,6 +28,7 @@ app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(morgan('dev'));
 app.use('/files', express.static(uploadsRoot));
+app.use('/review', express.static(publicRoot));
 app.use(requireAuth);
 
 app.get('/health', (_req, res) => {
@@ -106,10 +108,20 @@ app.post('/api/v1/sessions/:sessionId/results', async (req, res, next) => {
     const session = await readSession(sessionId);
     session.result = {
       receivedAt: new Date().toISOString(),
-      payload: req.body
+      payload: req.body,
+      summary: summarizeResult(req.body)
     };
     await writeSession(sessionId, session);
-    res.status(201).json({ ok: true, sessionId, stored: true });
+    res.status(201).json({ ok: true, sessionId, stored: true, summary: session.result.summary });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/sessions/:sessionId/summary', async (req, res, next) => {
+  try {
+    const session = await readSession(req.params.sessionId);
+    res.json(buildSessionSummary(session));
   } catch (error) {
     next(error);
   }
@@ -136,7 +148,8 @@ app.get('/api/v1/sessions', async (_req, res, next) => {
         tag: parsed.tag,
         createdAt: parsed.createdAt,
         imageCount: parsed.images.length,
-        hasResult: Boolean(parsed.result)
+        hasResult: Boolean(parsed.result),
+        summary: parsed.result?.summary || summarizeResult(parsed.result?.payload)
       });
     }
     sessions.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -206,4 +219,109 @@ function extensionFromMime(mimeType) {
   if (mimeType === 'image/png') return '.png';
   if (mimeType === 'image/webp') return '.webp';
   return '.jpg';
+}
+
+function buildSessionSummary(session) {
+  return {
+    sessionId: session.sessionId,
+    tag: session.tag,
+    platform: session.platform,
+    source: session.source,
+    createdAt: session.createdAt,
+    imageCount: session.images?.length || 0,
+    images: session.images || [],
+    hasResult: Boolean(session.result),
+    receivedAt: session.result?.receivedAt || null,
+    summary: session.result?.summary || summarizeResult(session.result?.payload),
+    payload: session.result?.payload || null
+  };
+}
+
+function summarizeResult(payload) {
+  if (!payload) {
+    return {
+      verdict: 'PENDING',
+      label: 'Pendiente',
+      explanation: 'La sesión todavía no tiene resultado del SDK.',
+      status: null,
+      failedChecks: [],
+      warningChecks: []
+    };
+  }
+
+  const status = payload.status || {};
+  const failedChecks = [];
+  const warningChecks = [];
+  let hasInvalidInput = false;
+  let hasTimeout = false;
+
+  for (const check of payload.authenticityChecks || []) {
+    const checkFailed = check.status === 0;
+    const checkWarning = check.status === 2;
+    for (const element of check.elements || []) {
+      const record = {
+        checkType: check.type,
+        checkName: check.typeName,
+        elementType: element.elementType,
+        elementName: element.elementTypeName,
+        status: element.status,
+        diagnose: element.elementDiagnose,
+        diagnoseName: element.elementDiagnoseName,
+        pageIndex: check.pageIndex
+      };
+      if (element.status === 0 || checkFailed) failedChecks.push(record);
+      if (element.status === 2 || checkWarning) warningChecks.push(record);
+      const diagnose = String(element.elementDiagnoseName || '').toLowerCase();
+      if (diagnose.includes('datos de entrada') || diagnose.includes('invalid input')) hasInvalidInput = true;
+      if (diagnose.includes('tiempo') || diagnose.includes('timeout') || diagnose.includes('exceeded')) hasTimeout = true;
+    }
+  }
+
+  const security = status.security;
+  const overall = status.overall;
+  const optical = status.optical;
+  const imageQa = status.imageQa;
+  const expiry = status.expiry;
+
+  if (security === 1 && overall === 1 && optical === 1) {
+    return {
+      verdict: 'PASS',
+      label: 'Autenticidad aprobada',
+      explanation: 'El SDK reportó controles ópticos y de seguridad aprobados.',
+      status,
+      failedChecks,
+      warningChecks
+    };
+  }
+
+  if (hasInvalidInput || hasTimeout || imageQa === 0) {
+    return {
+      verdict: 'RECAPTURE',
+      label: 'Requiere recaptura',
+      explanation: 'El SDK falló por datos inválidos, timeout o calidad insuficiente. No es una conclusión limpia de documento falso.',
+      status,
+      failedChecks,
+      warningChecks
+    };
+  }
+
+  if (security === 0 || overall === 0 || optical === 0 || expiry === 0) {
+    return {
+      verdict: 'FAIL',
+      label: 'No aprobado',
+      explanation: 'El SDK reportó fallo en seguridad, validez óptica, expiración o resultado general.',
+      status,
+      failedChecks,
+      warningChecks
+    };
+  }
+
+  return {
+    verdict: 'INCONCLUSIVE',
+    label: 'No concluyente',
+    explanation: 'No hay suficientes controles aprobados o fallidos para cerrar una decisión automática.',
+    status,
+    failedChecks,
+    warningChecks
+  };
 }

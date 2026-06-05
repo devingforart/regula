@@ -102,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         apiToken = binding.apiTokenInput.text?.toString().orEmpty().trim(),
         sessionTag = binding.sessionTagInput.text?.toString().orEmpty().trim().ifBlank { UUID.randomUUID().toString() },
         deviceName = configStore.load().deviceName,
+        deviceAddress = configStore.load().deviceAddress,
         strictSecurityChecks = binding.strictSecurityCheckbox.isChecked,
         readRfidChip = binding.readRfidCheckbox.isChecked,
         uploadImages = binding.uploadImagesCheckbox.isChecked,
@@ -208,8 +209,11 @@ class MainActivity : AppCompatActivity() {
         val overall = results.status?.getOverallStatus()
         val security = results.status?.getDetailsOptical()?.getSecurity()
         val imageQa = results.status?.getDetailsOptical()?.getImageQA()
+        val verdict = pocVerdict(results)
         return buildString {
             appendLine("Captura enviada.")
+            appendLine("veredicto POC: ${verdict.label}")
+            appendLine("criterio: ${verdict.explanation}")
             appendLine("sessionId: $sessionId")
             appendLine("documento: $docName")
             appendLine("overallStatus: ${checkResultName(overall)}")
@@ -217,6 +221,41 @@ class MainActivity : AppCompatActivity() {
             appendLine("imageQAStatus: ${checkResultName(imageQa)}")
             appendLine("imagenes procesadas: $imageCount")
             appendLine("respuesta API: $apiResponse")
+        }
+    }
+
+    private fun pocVerdict(results: DocumentReaderResults): PocVerdict {
+        val overall = results.status?.getOverallStatus()
+        val optical = results.status?.getOptical()
+        val security = results.status?.getDetailsOptical()?.getSecurity()
+        val imageQa = results.status?.getDetailsOptical()?.getImageQA()
+        val expiry = results.status?.getDetailsOptical()?.getExpiry()
+        var hasInvalidInputOrTimeout = false
+
+        results.authenticityResult?.checks?.forEach { check ->
+            check.elements?.forEach { element ->
+                val diagnose = element.getElementDiagnoseName(this).lowercase()
+                if (
+                    diagnose.contains("datos de entrada") ||
+                    diagnose.contains("invalid input") ||
+                    diagnose.contains("tiempo") ||
+                    diagnose.contains("timeout") ||
+                    diagnose.contains("exceeded")
+                ) {
+                    hasInvalidInputOrTimeout = true
+                }
+            }
+        }
+
+        return when {
+            security == 1 && overall == 1 && optical == 1 ->
+                PocVerdict("Autenticidad aprobada", "El SDK reportó seguridad y óptica OK.")
+            hasInvalidInputOrTimeout || imageQa == 0 ->
+                PocVerdict("Requiere recaptura", "Hubo timeout, datos inválidos o calidad insuficiente.")
+            security == 0 || overall == 0 || optical == 0 || expiry == 0 ->
+                PocVerdict("No aprobado", "El SDK reportó fallo de seguridad, óptica, expiración o resultado general.")
+            else ->
+                PocVerdict("No concluyente", "No hay suficientes controles para decisión automática.")
         }
     }
 
@@ -233,4 +272,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, message.lineSequence().firstOrNull().orEmpty(), Toast.LENGTH_SHORT).show()
         }
     }
+
+    private data class PocVerdict(
+        val label: String,
+        val explanation: String,
+    )
 }

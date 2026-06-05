@@ -37,7 +37,8 @@ Response sugerida:
 {
   "imageId": "img_01",
   "storageKey": "sessions/a6d8/front.jpg",
-  "url": "https://storage.example/sessions/a6d8/front.jpg"
+  "url": "/files/a6d8/front.jpg",
+  "sha256": "..."
 }
 ```
 
@@ -80,6 +81,68 @@ Payload base:
   "uploadedImages": []
 }
 ```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "sessionId": "a6d8fb7b-bae0-4e92-9e72-ef38f392fa9c",
+  "stored": true,
+  "summary": {
+    "verdict": "PASS",
+    "label": "Autenticidad aprobada",
+    "explanation": "El SDK reporto controles opticos y de seguridad aprobados."
+  }
+}
+```
+
+## 4. Listar sesiones
+
+`GET /api/v1/sessions`
+
+Devuelve sesiones ordenadas por fecha descendente, con cantidad de imagenes, flag de resultado y `summary` si existe.
+
+## 5. Obtener detalle
+
+`GET /api/v1/sessions/{sessionId}`
+
+Devuelve la sesion completa: metadata, imagenes, resultado y payload original.
+
+## 6. Obtener resumen de revision
+
+`GET /api/v1/sessions/{sessionId}/summary`
+
+Devuelve la sesion normalizada para el puesto fijo:
+
+```json
+{
+  "sessionId": "a6d8fb7b-bae0-4e92-9e72-ef38f392fa9c",
+  "imageCount": 3,
+  "images": [],
+  "summary": {
+    "verdict": "RECAPTURE",
+    "label": "Requiere recaptura",
+    "failedChecks": [],
+    "warningChecks": []
+  },
+  "payload": {}
+}
+```
+
+## Puesto fijo web
+
+`GET /review/`
+
+Pantalla HTML liviana para revisar sesiones, imagenes, tipo de documento, estados SDK y checks fallidos.
+
+## Semantica de veredicto POC
+
+- `PASS`: seguridad, optica y overall aprobados por el SDK.
+- `FAIL`: fallo de seguridad, optica, expiracion o resultado general.
+- `RECAPTURE`: timeout, datos invalidos o calidad insuficiente; requiere repetir captura.
+- `INCONCLUSIVE`: controles insuficientes para decision automatica.
+- `PENDING`: sesion sin resultado.
 
 ## Recomendaciones backend
 

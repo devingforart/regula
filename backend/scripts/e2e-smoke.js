@@ -45,4 +45,16 @@ if (!resultResponse.ok) {
 const sessionDetail = await fetch(`${baseUrl}/api/v1/sessions/${sessionId}`, {
   headers: authHeaders
 });
-console.log(await sessionDetail.json());
+const sessionJson = await sessionDetail.json();
+if (!sessionJson.result?.summary?.verdict) {
+  throw new Error('Session result summary was not generated');
+}
+
+const summaryResponse = await fetch(`${baseUrl}/api/v1/sessions/${sessionId}/summary`, {
+  headers: authHeaders
+});
+if (!summaryResponse.ok) {
+  throw new Error(`Failed getting summary: ${summaryResponse.status} ${await summaryResponse.text()}`);
+}
+
+console.log(await summaryResponse.json());

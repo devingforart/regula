@@ -3,8 +3,10 @@ package com.unum.regula
 import android.content.Context
 import java.util.UUID
 
+private const val DEFAULT_BACKEND_URL = "http://216.238.105.109:18081"
+
 data class AppConfig(
-    val baseUrl: String = "",
+    val baseUrl: String = DEFAULT_BACKEND_URL,
     val apiToken: String = "",
     val sessionTag: String = UUID.randomUUID().toString(),
     val deviceName: String = "Regula 7310",
@@ -19,7 +21,7 @@ class ConfigStore(context: Context) {
     private val prefs = context.getSharedPreferences("regula_capture_config", Context.MODE_PRIVATE)
 
     fun load(): AppConfig = AppConfig(
-        baseUrl = prefs.getString(KEY_BASE_URL, "") ?: "",
+        baseUrl = prefs.getString(KEY_BASE_URL, DEFAULT_BACKEND_URL) ?: DEFAULT_BACKEND_URL,
         apiToken = prefs.getString(KEY_API_TOKEN, "") ?: "",
         sessionTag = prefs.getString(KEY_SESSION_TAG, UUID.randomUUID().toString()) ?: UUID.randomUUID().toString(),
         deviceName = prefs.getString(KEY_DEVICE_NAME, "Regula 7310") ?: "Regula 7310",

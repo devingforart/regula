@@ -1,32 +1,54 @@
-# Regula Android Capture App
+# Regula 7310 POC E2E
 
-Aplicacion Android en Kotlin para:
+POC Android + backend para capturar documentos con Regula Document Reader SDK, enviar imagenes/resultados al servidor y revisar el caso en un puesto fijo web.
 
-- inicializar `Regula Document Reader SDK`
-- capturar un documento con la camara del SDK
-- extraer resultados de OCR, autenticidad, image QA y metadatos
-- guardar crops graficos localmente
-- crear una sesion en tu backend
-- subir imagenes y enviar el JSON final de resultados
+## Arquitectura
 
-## Estado actual
+- Android app Kotlin: inicializa Regula SDK, ejecuta `FullAuth`, extrae OCR, imagenes, autenticidad, image QA y estados.
+- Backend Node/Express: recibe sesiones, imagenes `multipart/form-data` y resultado JSON.
+- Puesto fijo web: `GET /review/` lista capturas, muestra imagenes, checks fallidos y veredicto POC.
+- Servidor actual: `http://216.238.105.109:18081`.
 
-- La app Android compila en esta maquina.
-- El backend local de prueba funciona y paso una prueba end-to-end.
-- APK debug generado en `app/build/outputs/apk/debug/app-debug.apk`.
+## Estado
 
-## Lo que falta para ejecutarla de verdad con Regula
+- La app compila en esta maquina.
+- La app apunta por defecto al backend `http://216.238.105.109:18081`.
+- El backend calcula un `summary` operativo: `PASS`, `FAIL`, `RECAPTURE`, `INCONCLUSIVE` o `PENDING`.
+- APK debug: `app/build/outputs/apk/debug/app-debug.apk`.
 
-1. Colocar `regula.license` en `app/src/main/assets/`.
-2. Opcional: colocar `db.dat` en `app/src/main/assets/Regula/`.
-3. Instalar el APK en emulador o dispositivo.
-4. Configurar la URL real del backend en la app.
+## Flujo Android
+
+1. Instalar la APK en el equipo Android/Regula.
+2. Abrir la app.
+3. Inicializar Regula. La app intenta BLE oficial, BLE manual y fallback local con `regula.license`.
+4. Capturar el documento fisico con el escenario `FullAuth`.
+5. La app crea una sesion, sube imagenes y envia el JSON del SDK al backend.
+6. En pantalla muestra `veredicto POC`, `sessionId`, estado general, seguridad e image QA.
+
+## Revision
+
+Abrir:
+
+```text
+http://216.238.105.109:18081/review/
+```
+
+Endpoints utiles:
+
+```bash
+curl -s http://216.238.105.109:18081/api/v1/sessions | jq
+curl -s http://216.238.105.109:18081/api/v1/sessions/SESSION_ID/summary | jq
+```
+
+## Criterio POC
+
+- `PASS`: seguridad, optica y overall aprobados por el SDK.
+- `FAIL`: fallo de seguridad, optica, expiracion o resultado general.
+- `RECAPTURE`: hubo timeout, datos de entrada invalidos o calidad insuficiente; no es una conclusion limpia de documento falso.
+- `INCONCLUSIVE`: no hay suficientes controles ejecutados para decidir automaticamente.
+- `PENDING`: sesion sin resultado.
 
 ## Backend local
-
-Ver [backend/README.md](/home/deving4art/Escritorio/dev/unum/regula/backend/README.md).
-
-Resumen rapido:
 
 ```bash
 cd backend
@@ -34,36 +56,24 @@ npm install
 npm start
 ```
 
-URL para la app:
+Prueba automatica:
 
-- emulador Android: `http://10.0.2.2:8080`
-- dispositivo fisico: `http://IP_DE_TU_PC:8080`
+```bash
+cd backend
+npm run test:e2e
+```
 
-## Endpoints esperados
+Contrato: [docs/API_CONTRACT.md](/home/deving4art/Escritorio/dev/unum/regula/docs/API_CONTRACT.md).
 
-La app usa este contrato:
-
-- `POST /api/v1/sessions`
-- `POST /api/v1/sessions/{sessionId}/images`
-- `POST /api/v1/sessions/{sessionId}/results`
-
-Detalles en [docs/API_CONTRACT.md](/home/deving4art/Escritorio/dev/unum/regula/docs/API_CONTRACT.md).
-
-## Notas de Regula
-
-- Dependencias Android tomadas de la documentacion oficial:
-  - https://docs.regulaforensics.com/develop/doc-reader-sdk/mobile/getting-started/installation/android/
-- Inicializacion y licencia:
-  - https://docs.regulaforensics.com/develop/doc-reader-sdk/mobile/getting-started/initialization/
-- Captura y resultados:
-  - https://docs.regulaforensics.com/develop/doc-reader-sdk/mobile/getting-started/document-processing/
-  - https://docs.regulaforensics.com/develop/doc-reader-sdk/mobile/getting-started/results/android/
-- Base de documentos:
-  - https://docs.regulaforensics.com/develop/doc-reader-sdk/mobile/getting-started/database/
-
-## Toolchain instalado aqui
+## Toolchain
 
 - JDK 17 en `~/.local/opt/temurin-17`
 - Android SDK en `~/Android/Sdk`
-- Gradle 8.7 en `~/.local/opt/gradle-8.7`
 - entorno shell en `~/.local/bin/regula-android-env`
+
+Compilar APK:
+
+```bash
+source ~/.local/bin/regula-android-env
+./gradlew assembleDebug
+```

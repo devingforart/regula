@@ -36,6 +36,32 @@ Luego en la app Android cargas ese mismo token en el campo `Bearer token API`.
 - `POST /api/v1/sessions/:sessionId/results`
 - `GET /api/v1/sessions`
 - `GET /api/v1/sessions/:sessionId`
+- `GET /api/v1/sessions/:sessionId/summary`
+- `GET /review/`
+
+## Puesto fijo de revision
+
+Abrir:
+
+```text
+http://127.0.0.1:8080/review/
+```
+
+En el servidor publico actual:
+
+```text
+http://216.238.105.109:18081/review/
+```
+
+El panel muestra sesiones, imagenes, tipo de documento, checks fallidos y veredicto POC.
+
+## Veredictos
+
+- `PASS`: controles de seguridad, optica y overall aprobados por el SDK.
+- `FAIL`: fallo de seguridad, optica, expiracion o resultado general.
+- `RECAPTURE`: timeout, datos invalidos o calidad insuficiente.
+- `INCONCLUSIVE`: no hay suficientes controles para decision automatica.
+- `PENDING`: sesion sin resultado.
 
 ## Persistencia
 
