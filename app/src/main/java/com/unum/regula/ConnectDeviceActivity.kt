@@ -44,9 +44,11 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private var selectedDevice: BluetoothDevice? = null
     private var selectedCandidate: BleCandidate? = null
     private var pendingCandidate: BleCandidate? = null
+    private var pendingManualName: String? = null
     private var connectionAttempts: List<ConnectionMethod> = emptyList()
     private var connectionAttemptIndex = 0
     private var isBleServiceConnected = false
+    private val statusLog = ArrayDeque<String>()
     private val discoveredDevices = linkedMapOf<String, BleCandidate>()
     private lateinit var devicesAdapter: ArrayAdapter<String>
 
@@ -103,6 +105,11 @@ class ConnectDeviceActivity : AppCompatActivity() {
         configStore = ConfigStore(this)
         val config = configStore.load()
         binding.deviceNameInput.setText(savedDeviceLabel(config))
+        appendStatus(
+            "Diagnóstico inicial",
+            "SDK btDeviceName: ${DocumentReader.Instance().functionality().btDeviceName.ifBlank { "(vacío)" }}",
+            "Modo actual: ${config.readerMode}",
+        )
 
         devicesAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
         binding.devicesList.adapter = devicesAdapter
@@ -131,11 +138,18 @@ class ConnectDeviceActivity : AppCompatActivity() {
         }
 
         binding.connectButton.setOnClickListener {
-            if (selectedDevice == null) {
-                showStatus("Primero escanea BLE y selecciona una MAC de la lista.")
+            val typedName = binding.deviceNameInput.text?.toString().orEmpty()
+                .substringBefore("(")
+                .trim()
+            if (selectedDevice == null && typedName.isBlank()) {
+                appendStatus("Primero escanea BLE y selecciona una MAC, o escribe el nombre exacto del dispositivo.")
                 return@setOnClickListener
             }
-            connectSelectedDevice()
+            if (selectedDevice == null) {
+                connectManualName(typedName)
+            } else {
+                connectSelectedDevice()
+            }
         }
 
         binding.skipButton.setOnClickListener {
@@ -240,29 +254,37 @@ class ConnectDeviceActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission")
     private fun tryConnectionAttempt(reason: String) {
         mainHandler.post {
-            val candidate = pendingCandidate ?: return@post
+            val candidate = pendingCandidate
+            val manualName = pendingManualName
             val method = connectionAttempts.getOrNull(connectionAttemptIndex)
             if (method == null) {
                 bleManager?.disconnect()
                 configStore.save(configStore.load().copy(readerMode = READER_MODE_NOT_CONNECTED))
                 dismissDialog()
-                showStatus(
+                appendStatus(
                     "No se pudo conectar el autenticador Regula 7310 ($reason). " +
-                        "Captura bloqueada: sin autenticador se usaría cámara normal y el POC no sería válido."
+                        "Captura bloqueada: sin autenticador se usaría cámara normal y el POC no sería válido.",
+                    bleDiagnosticLine(),
                 )
+                return@post
+            }
+            if (candidate == null && manualName.isNullOrBlank()) return@post
+            if (candidate == null && method == ConnectionMethod.DEVICE) {
+                tryNextConnectionMethod("No hay dispositivo BLE seleccionado para intento por dispositivo")
                 return@post
             }
 
             runCatching { bleManager?.disconnect() }
-            showDialog("Conectando ${candidate.displayName}")
+            val targetLabel = candidate?.displayLabel ?: manualName.orEmpty()
+            showDialog("Conectando ${candidate?.displayName ?: manualName}")
             mainHandler.removeCallbacks(connectTimeout)
             mainHandler.postDelayed(connectTimeout, 15_000)
-            showStatus("Intento ${connectionAttemptIndex + 1}/${connectionAttempts.size}: ${method.label} con ${candidate.displayLabel}")
+            appendStatus("Intento ${connectionAttemptIndex + 1}/${connectionAttempts.size}: ${method.label} con $targetLabel")
 
             when (method) {
-                ConnectionMethod.NAME -> bleManager?.connect(candidate.displayName)
-                ConnectionMethod.DEVICE -> bleManager?.connect(candidate.device)
-                ConnectionMethod.UUID -> bleManager?.connectUUID(candidate.device.address)
+                ConnectionMethod.NAME -> bleManager?.connect(candidate?.displayName ?: manualName.orEmpty())
+                ConnectionMethod.DEVICE -> bleManager?.connect(candidate!!.device)
+                ConnectionMethod.UUID -> bleManager?.connectUUID(candidate?.device?.address ?: manualName.orEmpty())
                 ConnectionMethod.AUTO -> bleManager?.connect()
             }
         }
@@ -285,13 +307,31 @@ class ConnectDeviceActivity : AppCompatActivity() {
         return attempts.distinct()
     }
 
+    private fun connectManualName(deviceName: String) {
+        stopBleScan()
+        ensureBleManager()
+        pendingCandidate = null
+        pendingManualName = deviceName
+        connectionAttempts = listOf(ConnectionMethod.NAME, ConnectionMethod.AUTO)
+        connectionAttemptIndex = 0
+        connectWithRegulaServiceName(deviceName)
+    }
+
     private fun connectWithRegulaService(candidate: BleCandidate) {
+        pendingManualName = candidate.displayName
+        connectWithRegulaServiceName(candidate.displayName)
+    }
+
+    private fun connectWithRegulaServiceName(deviceName: String) {
         stopRegulaBleService()
-        DocumentReader.Instance().functionality().edit().setBtDeviceName(candidate.displayName).apply()
-        showDialog("Conectando ${candidate.displayName}")
-        showStatus("Conectando con servicio oficial Regula: ${candidate.displayName}")
+        DocumentReader.Instance().functionality().edit().setBtDeviceName(deviceName).apply()
+        showDialog("Conectando $deviceName")
+        appendStatus(
+            "Conectando con servicio oficial Regula: $deviceName",
+            "SDK btDeviceName configurado: ${DocumentReader.Instance().functionality().btDeviceName}",
+        )
         val bleIntent = Intent(this, RegulaBleService::class.java).apply {
-            putExtra(RegulaBleService.DEVICE_NAME, candidate.displayName)
+            putExtra(RegulaBleService.DEVICE_NAME, deviceName)
         }
         startService(bleIntent)
         bindService(bleIntent, regulaBleConnection, BIND_AUTO_CREATE)
@@ -314,6 +354,7 @@ class ConnectDeviceActivity : AppCompatActivity() {
             val bleService = (service as RegulaBleService.LocalBinder).service
             bleManager = bleService.bleManager
             bleManager?.addCallback(bleCallbacks)
+            appendStatus("Servicio Regula enlazado.", bleDiagnosticLine())
             if (bleManager?.isConnected == true || bleManager?.isDeviceReady == true) {
                 mainHandler.removeCallbacks(serviceTimeout)
                 prepareDatabaseAndInitialize()
@@ -328,34 +369,36 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private val bleCallbacks = object : BleManagerCallback {
         override fun onDeviceSearching() = Unit
 
-        override fun onDeviceStopSearching() = Unit
+        override fun onDeviceStopSearching() {
+            appendStatus("Regula SDK detuvo búsqueda BLE.", bleDiagnosticLine())
+        }
 
         override fun onDeviceConnecting(device: BluetoothDevice) {
-            showStatus("Conectando con ${deviceLabel(device)}...")
+            appendStatus("Conectando con ${deviceLabel(device)}...")
         }
 
         override fun onDeviceConnected(device: BluetoothDevice) {
-            showStatus("Conectado a ${deviceLabel(device)}. Esperando autenticador...")
+            appendStatus("Conectado a ${deviceLabel(device)}. Esperando autenticador...", bleDiagnosticLine())
         }
 
         override fun onDeviceReady() {
             mainHandler.removeCallbacks(connectTimeout)
-            showStatus("Autenticador listo. Inicializando DocumentReader...")
+            appendStatus("Autenticador listo. Inicializando DocumentReader...", bleDiagnosticLine())
             prepareDatabaseAndInitialize()
         }
 
         override fun onDeviceDisconnecting(device: BluetoothDevice) = Unit
 
         override fun onDeviceDisconnected(device: BluetoothDevice) {
-            showStatus("Desconectado: ${deviceLabel(device)}")
+            appendStatus("Desconectado: ${deviceLabel(device)}", bleDiagnosticLine())
         }
 
         override fun onLinkLossOccurred(device: BluetoothDevice) {
-            showStatus("Se perdió la conexión con ${deviceLabel(device)}")
+            appendStatus("Se perdió la conexión con ${deviceLabel(device)}")
         }
 
         override fun onServicesDiscovered(device: BluetoothDevice) {
-            showStatus("Servicios BLE detectados en ${deviceLabel(device)}. Preparando autenticador...")
+            appendStatus("Servicios BLE detectados en ${deviceLabel(device)}. Preparando autenticador...")
         }
 
         override fun onError(device: BluetoothDevice?, message: String?, code: Int) {
@@ -363,7 +406,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
             tryNextConnectionMethod("Error Bluetooth ($code): ${message ?: "sin detalle"}")
         }
 
-        override fun onBatteryValueReceived(value: Int) = Unit
+        override fun onBatteryValueReceived(value: Int) {
+            appendStatus("Batería autenticador: $value%")
+        }
 
         override fun onCharacteristicWrite(
             gatt: android.bluetooth.BluetoothGatt,
@@ -383,7 +428,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         override fun onReceivedATRResponse(data: ByteArray) = Unit
 
-        override fun onParametersResponse(data: ByteArray) = Unit
+        override fun onParametersResponse(data: ByteArray) {
+            appendStatus("Parámetros recibidos del autenticador: ${data.size} bytes")
+        }
 
         override fun onStartFlashing() = Unit
 
@@ -395,7 +442,9 @@ class ConnectDeviceActivity : AppCompatActivity() {
 
         override fun onStopFlashingWithDelay() = Unit
 
-        override fun onGotLicense(success: Boolean, message: String, data: ByteArray) = Unit
+        override fun onGotLicense(success: Boolean, message: String, data: ByteArray) {
+            appendStatus("Licencia desde autenticador: success=$success message=$message bytes=${data.size}")
+        }
     }
 
     private fun prepareDatabaseAndInitialize() {
@@ -438,12 +487,12 @@ class ConnectDeviceActivity : AppCompatActivity() {
                 dismissDialog()
                 if (!success) {
                     configStore.save(configStore.load().copy(readerMode = READER_MODE_NOT_CONNECTED))
-                    showStatus("Falló la inicialización del 7310: ${error?.message ?: "sin detalle"}")
+                    appendStatus("Falló la inicialización del 7310: ${error?.message ?: "sin detalle"}", bleDiagnosticLine())
                     return
                 }
                 DocumentReader.Instance().functionality().edit().setUseAuthenticator(true).apply()
                 configStore.save(configStore.load().copy(readerMode = READER_MODE_BLE_AUTHENTICATOR))
-                showStatus("Regula 7310 conectado.")
+                appendStatus("Regula 7310 conectado.", bleDiagnosticLine())
                 launchMain()
             }
         })
@@ -570,6 +619,33 @@ class ConnectDeviceActivity : AppCompatActivity() {
         runOnUiThread {
             binding.statusText.text = message
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun appendStatus(vararg lines: String) {
+        val message = lines.filter { it.isNotBlank() }.joinToString("\n")
+        if (message.isBlank()) return
+        runOnUiThread {
+            statusLog.addFirst(message)
+            while (statusLog.size > 10) {
+                statusLog.removeLast()
+            }
+            binding.statusText.text = statusLog.joinToString("\n\n")
+            Toast.makeText(this, lines.firstOrNull().orEmpty(), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun bleDiagnosticLine(): String {
+        val manager = bleManager ?: return "BLE manager: no creado"
+        val connectedDevice = runCatching { manager.getConnectedDevice() }.getOrNull()
+        return buildString {
+            append("BLE state=${manager.getConnectionState()}")
+            append(" connected=${manager.isConnected}")
+            append(" ready=${manager.isDeviceReady}")
+            append(" device=${connectedDevice?.let { deviceLabel(it) } ?: "(ninguno)"}")
+            append(" battery=${manager.getBatteryValue()}")
+            append(" model=${manager.getModelNumber() ?: "(sin modelo)"}")
+            append(" serial=${manager.getSerialNumber() ?: "(sin serial)"}")
         }
     }
 
