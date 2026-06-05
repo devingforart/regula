@@ -32,7 +32,6 @@ import com.regula.documentreader.api.completions.IDocumentReaderInitCompletion
 import com.regula.documentreader.api.completions.IDocumentReaderPrepareCompletion
 import com.regula.documentreader.api.errors.DocumentReaderException
 import com.regula.documentreader.api.params.BleDeviceConfig
-import com.regula.documentreader.api.params.DocReaderConfig
 import com.unum.regula.databinding.ActivityConnectDeviceBinding
 
 class ConnectDeviceActivity : AppCompatActivity() {
@@ -242,11 +241,15 @@ class ConnectDeviceActivity : AppCompatActivity() {
     private fun tryConnectionAttempt(reason: String) {
         mainHandler.post {
             val candidate = pendingCandidate ?: return@post
-        val method = connectionAttempts.getOrNull(connectionAttemptIndex)
+            val method = connectionAttempts.getOrNull(connectionAttemptIndex)
             if (method == null) {
                 bleManager?.disconnect()
-                showStatus("BLE no conectó ($reason). Probando inicialización local con licencia...")
-                initializeLocalReader()
+                configStore.save(configStore.load().copy(readerMode = READER_MODE_NOT_CONNECTED))
+                dismissDialog()
+                showStatus(
+                    "No se pudo conectar el autenticador Regula 7310 ($reason). " +
+                        "Captura bloqueada: sin autenticador se usaría cámara normal y el POC no sería válido."
+                )
                 return@post
             }
 
@@ -434,35 +437,13 @@ class ConnectDeviceActivity : AppCompatActivity() {
             override fun onInitCompleted(success: Boolean, error: DocumentReaderException?) {
                 dismissDialog()
                 if (!success) {
+                    configStore.save(configStore.load().copy(readerMode = READER_MODE_NOT_CONNECTED))
                     showStatus("Falló la inicialización del 7310: ${error?.message ?: "sin detalle"}")
                     return
                 }
                 DocumentReader.Instance().functionality().edit().setUseAuthenticator(true).apply()
+                configStore.save(configStore.load().copy(readerMode = READER_MODE_BLE_AUTHENTICATOR))
                 showStatus("Regula 7310 conectado.")
-                launchMain()
-            }
-        })
-    }
-
-    private fun initializeLocalReader() {
-        showDialog("Inicializando licencia local")
-        val license = runCatching {
-            assets.open("regula.license").use { it.readBytes() }
-        }.getOrElse { error ->
-            dismissDialog()
-            showStatus("No pude leer regula.license desde assets: ${error.message}")
-            return
-        }
-
-        DocumentReader.Instance().initializeReader(this, DocReaderConfig(license), object : IDocumentReaderInitCompletion {
-            override fun onInitCompleted(success: Boolean, error: DocumentReaderException?) {
-                dismissDialog()
-                if (!success) {
-                    showStatus("Tampoco inicializó con licencia local: ${error?.message ?: "sin detalle"}. Esto confirma que el hardware no está disponible por BLE ni por modo local.")
-                    return
-                }
-                DocumentReader.Instance().functionality().edit().setUseAuthenticator(true).apply()
-                showStatus("Regula inicializado con licencia local. Probemos captura FullAuth.")
                 launchMain()
             }
         })

@@ -68,6 +68,9 @@ class MainActivity : AppCompatActivity() {
             if (!DocumentReader.Instance().isReady) {
                 renderStatus("Conecta primero el Regula 7310.")
                 startActivity(Intent(this, ConnectDeviceActivity::class.java))
+            } else if (config.readerMode != READER_MODE_BLE_AUTHENTICATOR) {
+                renderStatus("Captura bloqueada: el SDK está listo, pero no hay evidencia de autenticador 7310 conectado. Vuelve a conectar Regula 7310.")
+                startActivity(Intent(this, ConnectDeviceActivity::class.java))
             } else {
                 configureProcessParams(config)
                 ensureCameraAndCapture()
@@ -82,8 +85,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         readerInitialized = DocumentReader.Instance().isReady
-        if (readerInitialized) {
+        if (readerInitialized && configStore.load().readerMode == READER_MODE_BLE_AUTHENTICATOR) {
             renderStatus("Regula 7310 conectado. Puedes capturar el documento.")
+        } else if (readerInitialized) {
+            renderStatus("SDK inicializado sin evidencia de autenticador 7310. Conecta el 7310 antes de capturar.")
         }
     }
 
@@ -103,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         sessionTag = binding.sessionTagInput.text?.toString().orEmpty().trim().ifBlank { UUID.randomUUID().toString() },
         deviceName = configStore.load().deviceName,
         deviceAddress = configStore.load().deviceAddress,
+        readerMode = configStore.load().readerMode,
         strictSecurityChecks = binding.strictSecurityCheckbox.isChecked,
         readRfidChip = binding.readRfidCheckbox.isChecked,
         uploadImages = binding.uploadImagesCheckbox.isChecked,

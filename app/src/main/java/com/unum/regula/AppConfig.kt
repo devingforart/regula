@@ -11,6 +11,7 @@ data class AppConfig(
     val sessionTag: String = UUID.randomUUID().toString(),
     val deviceName: String = "Regula 7310",
     val deviceAddress: String = "",
+    val readerMode: String = READER_MODE_NOT_CONNECTED,
     val strictSecurityChecks: Boolean = true,
     val readRfidChip: Boolean = false,
     val uploadImages: Boolean = true,
@@ -26,6 +27,7 @@ class ConfigStore(context: Context) {
         sessionTag = prefs.getString(KEY_SESSION_TAG, UUID.randomUUID().toString()) ?: UUID.randomUUID().toString(),
         deviceName = prefs.getString(KEY_DEVICE_NAME, "Regula 7310") ?: "Regula 7310",
         deviceAddress = prefs.getString(KEY_DEVICE_ADDRESS, "") ?: "",
+        readerMode = prefs.getString(KEY_READER_MODE, READER_MODE_NOT_CONNECTED) ?: READER_MODE_NOT_CONNECTED,
         strictSecurityChecks = prefs.getBoolean(KEY_STRICT_SECURITY, true),
         readRfidChip = prefs.getBoolean(KEY_READ_RFID, false),
         uploadImages = prefs.getBoolean(KEY_UPLOAD_IMAGES, true),
@@ -39,6 +41,7 @@ class ConfigStore(context: Context) {
             .putString(KEY_SESSION_TAG, config.sessionTag)
             .putString(KEY_DEVICE_NAME, config.deviceName)
             .putString(KEY_DEVICE_ADDRESS, config.deviceAddress)
+            .putString(KEY_READER_MODE, config.readerMode)
             .putBoolean(KEY_STRICT_SECURITY, config.strictSecurityChecks)
             .putBoolean(KEY_READ_RFID, config.readRfidChip)
             .putBoolean(KEY_UPLOAD_IMAGES, config.uploadImages)
@@ -52,9 +55,13 @@ class ConfigStore(context: Context) {
         const val KEY_SESSION_TAG = "session_tag"
         const val KEY_DEVICE_NAME = "device_name"
         const val KEY_DEVICE_ADDRESS = "device_address"
+        const val KEY_READER_MODE = "reader_mode"
         const val KEY_STRICT_SECURITY = "strict_security"
         const val KEY_READ_RFID = "read_rfid"
         const val KEY_UPLOAD_IMAGES = "upload_images"
         const val KEY_PREPARE_DB = "prepare_db"
     }
 }
+
+const val READER_MODE_NOT_CONNECTED = "not-connected"
+const val READER_MODE_BLE_AUTHENTICATOR = "ble-authenticator"

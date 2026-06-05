@@ -143,6 +143,7 @@ Pantalla HTML liviana para revisar sesiones, imagenes, tipo de documento, estado
 - `RECAPTURE`: timeout, datos invalidos o calidad insuficiente; requiere repetir captura.
 - `INCONCLUSIVE`: controles insuficientes para decision automatica.
 - `PENDING`: sesion sin resultado.
+- `DEVICE_NOT_CONFIRMED`: la app no confirmo inicializacion con autenticador Regula 7310; captura invalida para el POC de hardware.
 
 ## Recomendaciones backend
 

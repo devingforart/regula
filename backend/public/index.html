@@ -125,7 +125,8 @@
       }
 
       .PENDING,
-      .INCONCLUSIVE {
+      .INCONCLUSIVE,
+      .DEVICE_NOT_CONFIRMED {
         background: var(--unknown);
       }
 
@@ -236,6 +237,7 @@
         const checks = summary.failedChecks || [];
         const warnings = summary.warningChecks || [];
         const images = session.images || [];
+        const captureDevice = session.payload?.captureDevice || {};
 
         detailNode.innerHTML = `
           <div class="panel">
@@ -249,6 +251,15 @@
             <div class="panel">
               <h3>Estado SDK</h3>
               ${statusTable(summary.status)}
+            </div>
+            <div class="panel">
+              <h3>Dispositivo</h3>
+              ${statusTable({
+                readerMode: captureDevice.readerMode || "desconocido",
+                deviceName: captureDevice.deviceName || "desconocido",
+                deviceAddress: captureDevice.deviceAddress || "desconocido",
+                authenticatorConfirmed: captureDevice.authenticatorConfirmed === true
+              })}
             </div>
             <div class="panel">
               <h3>Documento</h3>

@@ -23,6 +23,7 @@ data class CapturedImage(
 
 object ResultMapper {
     fun map(context: Context, results: DocumentReaderResults, sessionId: String): CapturePayload {
+        val appConfig = ConfigStore(context).load()
         val textFields = JSONArray()
         results.textResult?.fields?.forEach { field ->
             val values = JSONArray()
@@ -100,9 +101,13 @@ object ResultMapper {
 
         val images = mutableListOf<CapturedImage>()
         val graphicFields = JSONArray()
+        val graphicLights = linkedSetOf<Int>()
+        val graphicSourceTypes = linkedSetOf<Int>()
         results.graphicResult?.fields?.forEachIndexed { index, field ->
             val bitmap = field.getBitmap() ?: return@forEachIndexed
             val fieldName = field.getFieldName(context)
+            graphicLights += field.light
+            graphicSourceTypes += field.sourceType
             val fileType = buildGraphicType(fieldName, index, field.pageIndex)
             val file = persistBitmap(context, sessionId, fileType, bitmap)
             val hash = sha256(file)
@@ -134,6 +139,19 @@ object ResultMapper {
         val payload = JSONObject()
             .put("sessionId", sessionId)
             .put("documentTypes", documentTypes)
+            .put("captureDevice", JSONObject()
+                .put("expectedDevice", "Regula 7310")
+                .put("readerMode", appConfig.readerMode)
+                .put("deviceName", appConfig.deviceName)
+                .put("deviceAddress", appConfig.deviceAddress)
+                .put("authenticatorRequired", true)
+                .put("authenticatorConfirmed", appConfig.readerMode == READER_MODE_BLE_AUTHENTICATOR)
+            )
+            .put("imageEvidence", JSONObject()
+                .put("graphicFieldCount", graphicFields.length())
+                .put("lights", JSONArray(graphicLights.toList()))
+                .put("sourceTypes", JSONArray(graphicSourceTypes.toList()))
+            )
             .put("status", JSONObject()
                 .put("overall", results.status?.getOverallStatus())
                 .put("optical", results.status?.getOptical())

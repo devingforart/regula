@@ -14,6 +14,7 @@ POC Android + backend para capturar documentos con Regula Document Reader SDK, e
 - La app compila en esta maquina.
 - La app apunta por defecto al backend `http://216.238.105.109:18081`.
 - El backend calcula un `summary` operativo: `PASS`, `FAIL`, `RECAPTURE`, `INCONCLUSIVE` o `PENDING`.
+- Para que una captura sea valida como POC 7310, la app exige inicializacion `BleDeviceConfig` con autenticador confirmado. Ya no usa fallback local con camara normal.
 - APK debug: `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Flujo Android
@@ -47,6 +48,7 @@ curl -s http://216.238.105.109:18081/api/v1/sessions/SESSION_ID/summary | jq
 - `RECAPTURE`: hubo timeout, datos de entrada invalidos o calidad insuficiente; no es una conclusion limpia de documento falso.
 - `INCONCLUSIVE`: no hay suficientes controles ejecutados para decidir automaticamente.
 - `PENDING`: sesion sin resultado.
+- `DEVICE_NOT_CONFIRMED`: la app no confirmo autenticador 7310; captura invalida para este POC.
 
 ## Backend local
 

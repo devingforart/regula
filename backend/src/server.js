@@ -254,6 +254,19 @@ function summarizeResult(payload) {
   const warningChecks = [];
   let hasInvalidInput = false;
   let hasTimeout = false;
+  const captureDevice = payload.captureDevice || {};
+
+  if (captureDevice.authenticatorRequired === true && captureDevice.authenticatorConfirmed !== true) {
+    return {
+      verdict: 'DEVICE_NOT_CONFIRMED',
+      label: '7310 no confirmado',
+      explanation: 'La app no confirmó inicialización con autenticador Regula 7310. Esta captura no es válida para el POC de autenticidad con hardware.',
+      status,
+      failedChecks,
+      warningChecks,
+      captureDevice
+    };
+  }
 
   for (const check of payload.authenticityChecks || []) {
     const checkFailed = check.status === 0;
